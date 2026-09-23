@@ -18,18 +18,9 @@
     <div class="controls">
       <input id="search" type="search" placeholder="Search pitcher..." aria-label="Search pitcher" />
 
-      <label for="metric-select">Rank by</label>
-      <select id="metric-select">
-        <option value="adjusted_uscore" selected>Adjusted uScore</option>
-        <option value="uscore">uScore</option>
-        <option value="delivery_quotient">Delivery Quotient</option>
-        <option value="adj_delivery_quotient">Adj. Delivery Quotient</option>
-      </select>
-
       <label for="pitch-select">Pitch type</label>
       <select id="pitch-select">
-        <option value="">Overall (all pitch types)</option>
-        <option value="FF">4-Seam Fastball</option>
+        <option value="FF" selected>4-Seam Fastball</option>
         <option value="SI">Sinker</option>
         <option value="FC">Cutter</option>
         <option value="CH">Changeup</option>
@@ -53,7 +44,7 @@
   </main>
 
   <footer>
-    <p>Data refreshes daily from Baseball Savant. uScore measures how far each pitch, and each delivery, deviates from league norms.</p>
+    <p>Data refreshes daily from Baseball Savant. uScore measures how far each pitch deviates from league norms for that pitch type.</p>
   </footer>
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
