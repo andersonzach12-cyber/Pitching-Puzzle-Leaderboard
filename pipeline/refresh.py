@@ -182,22 +182,38 @@ def fetch_delivery_metrics() -> pd.DataFrame:
     """One row per pitcher: extension, arm angle, release height, horizontal
     release point. Returns columns: player_id, pitcher_name, extension_ft,
     arm_angle_deg, release_height_ft, horizontal_release_ft."""
-    url = f"https://baseballsavant.mlb.com/leaderboard/pitcher-arm-angle?year={SEASON}&csv=true"
+    url = f"https://baseballsavant.mlb.com/leaderboard/pitcher-arm-angles?season={SEASON}&min=1&csv=true"
     resp = requests.get(url, headers=HEADERS, timeout=30)
     resp.raise_for_status()
     raw = pd.read_csv(StringIO(resp.text))
 
-    rename = {
+    print("pitcher-arm-angles columns:", list(raw.columns))
+
+    id_rename = {
+        "pitcher_id": "player_id",
+        "player_id": "player_id",
+        "last_name, first_name": "pitcher_name",
+        "pitcher_name": "pitcher_name",
+        "name": "pitcher_name",
+    }
+    metric_rename = {
         "release_extension": "extension_ft",
         "avg_release_extension": "extension_ft",
+        "extension": "extension_ft",
         "ball_angle": "arm_angle_deg",
         "arm_angle": "arm_angle_deg",
         "release_pos_z": "release_height_ft",
         "release_pos_x": "horizontal_release_ft",
     }
+    rename = {**id_rename, **metric_rename}
     df = raw.rename(columns={c: rename[c] for c in raw.columns if c in rename})
+
     keep = ["player_id", "pitcher_name", "extension_ft", "arm_angle_deg",
             "release_height_ft", "horizontal_release_ft"]
+    missing = [c for c in keep if c not in df.columns]
+    if missing:
+        print(f"WARNING: pitcher-arm-angles export is missing expected columns {missing} "
+              f"-- those fields will be blank this run. Raw columns were: {list(raw.columns)}")
     for col in keep:
         if col not in df.columns:
             df[col] = None
