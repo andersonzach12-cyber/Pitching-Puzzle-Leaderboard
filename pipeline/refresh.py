@@ -307,8 +307,30 @@ def compute_pitch_metrics_from_events(events: pd.DataFrame) -> tuple[pd.DataFram
     df["velo"] = pd.to_numeric(df[resolved["velo"]], errors="coerce")
     df["spin_rpm"] = pd.to_numeric(df[resolved["spin_rpm"]], errors="coerce")
     df["ivb_in"] = pd.to_numeric(df[resolved["ivb_in_raw"]], errors="coerce") * 12
-    df["horizontal_in"] = pd.to_numeric(df[resolved["horizontal_in_raw"]], errors="coerce") * 12
     df["extension_ft"] = pd.to_numeric(df[resolved["extension_ft"]], errors="coerce")
+
+    # Statcast's raw horizontal-break column isn't handedness-normalized: the
+    # exact same physical movement (e.g. a changeup's arm-side fade) comes
+    # back as a NEGATIVE number for a right-handed pitcher and a POSITIVE
+    # number for a left-handed one, because it's measured from the catcher's
+    # perspective, not relative to which arm threw it. Z-scoring that raw
+    # value across a league that mixes both hands doesn't measure "how much
+    # did this pitch move" -- it mostly measures "is this pitcher left-handed",
+    # since every lefty's break lands on one side of the distribution and
+    # every righty's lands on the other. Flip the sign for right-handers so
+    # positive consistently means "arm-side" movement for everyone, and
+    # negative consistently means "glove-side" -- the standard convention in
+    # pitching analytics, and the only way this number is comparable across
+    # a mixed-handed league.
+    if "p_throws" not in df.columns:
+        raise RuntimeError(
+            f"statcast_search: no 'p_throws' (pitcher handedness) column -- needed to make "
+            f"horizontal break comparable across left- and right-handed pitchers. "
+            f"Actual columns were: {list(df.columns)}"
+        )
+    raw_horizontal_in = pd.to_numeric(df[resolved["horizontal_in_raw"]], errors="coerce") * 12
+    is_rhp = df["p_throws"].astype(str).str.upper().eq("R")
+    df["horizontal_in"] = raw_horizontal_in.where(~is_rhp, -raw_horizontal_in)
 
     per_pitcher_totals = df.groupby("player_id").size().rename("total_pitches")
 
