@@ -485,9 +485,29 @@ def compute_pitch_quotients(pitch_metrics: pd.DataFrame, active_spin_fallback: p
 
 def compute_pitchers(pitch_metrics: pd.DataFrame, delivery: pd.DataFrame,
                       pitcher_names: pd.DataFrame) -> pd.DataFrame:
-    delivery = delivery.copy()
+    # `delivery` (the arm-angle leaderboard export) only covers a subset of
+    # pitchers -- a pitcher can clear MIN_PITCHES in the full-season pitch
+    # aggregation and appear in `pitch_metrics` without showing up on that
+    # leaderboard. The `pitchers` table has to contain every player_id that
+    # `pitch_metrics` references (pitch_metrics.player_id is a foreign key
+    # into pitchers), so build the full player universe as the union of
+    # both sources first, then left-merge delivery's fields onto it --
+    # pitchers missing from the arm-angle export just get blank delivery
+    # metrics (handled below via fillna(0) on the z-scores) rather than
+    # being dropped from the database entirely.
+    all_player_ids = pd.Index(
+        pd.unique(pd.concat([delivery["player_id"], pitch_metrics["player_id"]], ignore_index=True)),
+        name="player_id",
+    )
+    base = pd.DataFrame({"player_id": all_player_ids})
+    delivery = base.merge(delivery, on="player_id", how="left")
+
     for col in ["extension_ft", "arm_angle_deg", "release_height_ft", "horizontal_release_ft"]:
-        delivery[f"{col}_z"] = zscore(delivery[col])
+        # fillna(0) on the z-score itself (not the raw metric) treats a
+        # missing delivery reading as "no deviation from league average" --
+        # neutral, rather than letting a single NaN metric poison the whole
+        # row's delivery_quotient/adj_delivery_quotient sum with NaN.
+        delivery[f"{col}_z"] = zscore(delivery[col]).fillna(0.0)
 
     delivery["delivery_quotient"] = sum(
         delivery[f"{c}_z"].abs()
@@ -575,20 +595,33 @@ def run():
                 extension_from_events, on="player_id", how="left"
             )
 
-        # Pitcher names aren't in the arm-angle export in every Savant
-        # version, so build the name lookup from whichever source has it:
-        # prefer arm-angles (already filtered to real pitchers), fall back
-        # to the raw pitch events (player_name column) if it's blank there.
-        pitcher_names = delivery[["player_id", "pitcher_name"]].drop_duplicates()
-        if pitcher_names["pitcher_name"].isna().all():
-            name_col = next((c for c in PLAYER_NAME_ALIASES if c in events.columns), None)
-            if name_col:
-                events_named = normalize_player_id(events.copy(), "statcast_search (names)")
-                pitcher_names = (
-                    events_named[["player_id", name_col]]
-                    .rename(columns={name_col: "pitcher_name"})
-                    .drop_duplicates(subset=["player_id"])
-                )
+        # Build a name lookup that covers every pitcher, not just the ones
+        # on the (smaller) arm-angle leaderboard -- a pitcher who only shows
+        # up in pitch_metrics (see compute_pitchers' union-of-player-ids fix
+        # below) still needs a name. Start from the raw pitch events, which
+        # include every pitcher who threw a pitch this season, then let the
+        # arm-angle leaderboard's name win where both have one, since it's
+        # already curated to real MLB pitcher names.
+        name_col = next((c for c in PLAYER_NAME_ALIASES if c in events.columns), None)
+        if name_col:
+            events_named = normalize_player_id(events.copy(), "statcast_search (names)")
+            names_from_events = (
+                events_named[["player_id", name_col]]
+                .rename(columns={name_col: "pitcher_name"})
+                .dropna(subset=["pitcher_name"])
+                .drop_duplicates(subset=["player_id"])
+            )
+        else:
+            names_from_events = pd.DataFrame(columns=["player_id", "pitcher_name"])
+
+        names_from_delivery = (
+            delivery[["player_id", "pitcher_name"]]
+            .dropna(subset=["pitcher_name"])
+            .drop_duplicates(subset=["player_id"])
+        )
+        pitcher_names = pd.concat([names_from_delivery, names_from_events], ignore_index=True).drop_duplicates(
+            subset=["player_id"], keep="first"
+        )
 
         pitch_metrics = compute_pitch_quotients(pitch_metrics_raw, active_spin)
         pitch_metrics["season"] = SEASON  # required by the pitch_metrics table's NOT NULL constraint
