@@ -577,9 +577,19 @@ def compute_pitchers(pitch_metrics: pd.DataFrame, delivery: pd.DataFrame,
 # 5. Write to Supabase
 # --------------------------------------------------------------------------
 
-def upsert_in_batches(table, rows: list[dict], batch_size: int = 500):
+def upsert_in_batches(table, rows: list[dict], batch_size: int = 500, on_conflict: str | None = None):
+    """Upsert wraps Postgres' `INSERT ... ON CONFLICT`, but Supabase's
+    client only targets the table's PRIMARY KEY by default -- it has no way
+    to know a different column combination should count as "the same row"
+    unless told explicitly via on_conflict. `pitchers` is fine without it
+    (player_id IS the primary key), but `pitch_metrics`'s primary key is an
+    unrelated auto-incrementing `id` column, while the real uniqueness rule
+    is the separate `unique(player_id, season, pitch_type)` constraint --
+    without on_conflict, every run tries to INSERT a brand new row and
+    collides with that constraint instead of updating the existing row."""
+    kwargs = {"on_conflict": on_conflict} if on_conflict else {}
     for i in range(0, len(rows), batch_size):
-        table.upsert(rows[i:i + batch_size]).execute()
+        table.upsert(rows[i:i + batch_size], **kwargs).execute()
 
 
 def run():
@@ -667,7 +677,25 @@ def run():
         )
 
         upsert_in_batches(supabase.table("pitchers"), pitchers_rows)
-        upsert_in_batches(supabase.table("pitch_metrics"), pitch_rows)
+        upsert_in_batches(supabase.table("pitch_metrics"), pitch_rows, on_conflict="player_id,season,pitch_type")
+
+        # upsert only adds/updates rows -- it never removes ones that
+        # shouldn't be there anymore (e.g. a pitcher who qualified in a
+        # past run, under looser filtering, but doesn't this time). Without
+        # this cleanup, players like that would sit in the database
+        # forever. Compare who's actually in this run's result against who
+        # the database already has for this season, and delete anyone no
+        # longer present -- pitch_metrics rows are removed automatically
+        # via the "on delete cascade" foreign key set up in schema.sql.
+        current_ids = {r["player_id"] for r in pitchers_rows}
+        existing = supabase.table("pitchers").select("player_id").eq("season", SEASON).execute().data
+        stale_ids = [row["player_id"] for row in existing if row["player_id"] not in current_ids]
+        for i in range(0, len(stale_ids), 500):
+            chunk = stale_ids[i:i + 500]
+            supabase.table("pitchers").delete().eq("season", SEASON).in_("player_id", chunk).execute()
+        if stale_ids:
+            print(f"Removed {len(stale_ids)} pitchers no longer in this run's data "
+                  f"(e.g. previously-included spring-training-only players).")
 
         supabase.table("refresh_log").update({
             "status": "success",
@@ -675,7 +703,8 @@ def run():
             "pitchers_written": len(pitchers_rows),
         }).eq("id", log_id).execute()
 
-        print(f"Refresh complete: {len(pitchers_rows)} pitchers, {len(pitch_rows)} pitch-type rows.")
+        print(f"Refresh complete: {len(pitchers_rows)} pitchers, {len(pitch_rows)} pitch-type rows "
+              f"({len(stale_ids)} stale pitchers removed).")
 
     except Exception as e:
         supabase.table("refresh_log").update({
