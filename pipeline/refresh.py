@@ -591,6 +591,7 @@ def run():
                 )
 
         pitch_metrics = compute_pitch_quotients(pitch_metrics_raw, active_spin)
+        pitch_metrics["season"] = SEASON  # required by the pitch_metrics table's NOT NULL constraint
         pitchers = compute_pitchers(pitch_metrics, delivery, pitcher_names)
 
         pitchers = pitchers.dropna(subset=["player_id"])
