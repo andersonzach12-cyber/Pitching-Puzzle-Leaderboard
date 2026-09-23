@@ -152,11 +152,11 @@ PITCH_COLUMN_CANDIDATES = {
 }
 
 
-def fetch_pitch_events() -> pd.DataFrame:
-    """Every individual pitch thrown by any pitcher this season, as one row
-    per pitch, straight from Savant's Statcast Search CSV export."""
-    start = f"{SEASON}-01-01"
-    end = datetime.now().strftime("%Y-%m-%d")
+STATCAST_SEARCH_ROW_CAP = 25000  # Savant silently caps a single request at this many rows
+CHUNK_DAYS = 3  # small enough that even the busiest 3-day stretch of a full slate stays under the cap
+
+
+def _fetch_pitch_events_chunk(start: str, end: str) -> pd.DataFrame:
     params = {
         "all": "true",
         "hfGT": "R|PO|S|",  # regular season, postseason, spring training
@@ -176,7 +176,46 @@ def fetch_pitch_events() -> pd.DataFrame:
     resp = requests.get(STATCAST_SEARCH_URL, params=params, headers=HEADERS, timeout=180)
     resp.raise_for_status()
     df = pd.read_csv(StringIO(resp.text), low_memory=False)
-    print(f"statcast_search returned {len(df)} pitch rows, {len(df.columns)} columns")
+    if len(df) >= STATCAST_SEARCH_ROW_CAP:
+        print(f"WARNING: chunk {start}..{end} returned {len(df)} rows -- likely hit Savant's "
+              f"per-request cap ({STATCAST_SEARCH_ROW_CAP}); some pitches from this window may be missing. "
+              "Consider lowering CHUNK_DAYS if this keeps happening.")
+    return df
+
+
+def fetch_pitch_events() -> pd.DataFrame:
+    """Every individual pitch thrown by any pitcher this season, as one row
+    per pitch, straight from Savant's Statcast Search CSV export.
+
+    Savant caps a single request's CSV export at ~25,000 rows -- a full
+    season is more like 600,000+ pitches league-wide, so one request would
+    silently return only a small, order-biased slice. This instead pulls
+    the season in small date windows and concatenates them, so the league
+    z-scores downstream are calculated against the real, full-season data.
+    """
+    # Spring training usually starts mid-to-late February; starting the pull
+    # there instead of Jan 1 skips several weeks of guaranteed-empty windows
+    # (and requests) with no games at all.
+    season_start = datetime(SEASON, 2, 1)
+    season_end = datetime.now()
+
+    chunks = []
+    window_start = season_start
+    while window_start <= season_end:
+        window_end = min(window_start + pd.Timedelta(days=CHUNK_DAYS), season_end)
+        start_str = window_start.strftime("%Y-%m-%d")
+        end_str = window_end.strftime("%Y-%m-%d")
+        chunk = _fetch_pitch_events_chunk(start_str, end_str)
+        if not chunk.empty:
+            chunks.append(chunk)
+        window_start = window_end + pd.Timedelta(days=1)
+
+    if not chunks:
+        raise RuntimeError(f"statcast_search: no pitch data returned for any window in {SEASON}")
+
+    df = pd.concat(chunks, ignore_index=True)
+    print(f"statcast_search: pulled {len(chunks)} date windows, {len(df)} total pitch rows, "
+          f"{len(df.columns)} columns")
     print("statcast_search columns (first 40):", list(df.columns)[:40])
     return df
 
@@ -443,7 +482,12 @@ def compute_pitchers(pitch_metrics: pd.DataFrame, delivery: pd.DataFrame,
     arsenal_entropy = usage_by_player.apply(entropy)
     diversity_multiplier = 0.9 + 0.15 * arsenal_entropy
 
-    pitchers = delivery.merge(group_quotients, left_on="player_id", right_index=True, how="left")
+    # delivery already carries its own (possibly all-blank) 'pitcher_name'
+    # column; drop it before merging in the authoritative one from
+    # pitcher_names, so pandas doesn't rename both to pitcher_name_x/_y.
+    pitchers = delivery.drop(columns=["pitcher_name"]).merge(
+        group_quotients, left_on="player_id", right_index=True, how="left"
+    )
     pitchers = pitchers.merge(pitcher_names, on="player_id", how="left")
     pitchers["pitch_sum"] = pitchers["pitch_sum"].fillna(0.0)
     pitchers["n_pitches_thrown"] = pitchers["player_id"].map(n_thrown).fillna(0).astype(int)
