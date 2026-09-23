@@ -1,39 +1,21 @@
 // uScore leaderboard front end.
 //
-// Deliberately simple today (one table, sortable, filterable) but built on
-// top of a normalized query layer (fetchLeaderboard) so a richer dashboard
-// later -- charts, pitcher detail pages, per-pitch-type breakdowns -- can
-// be added without touching the database or the pipeline, just this file
-// and index.html.
+// Pitch-specific leaderboards only (per pitch type, straight from Statcast's
+// own pitch classification) -- the composite "overall pitcher" score is
+// still computed and stored by the pipeline every day, just not surfaced
+// here for now. Built on a normalized query layer (fetchPitchTypeLeaderboard)
+// so a richer dashboard -- charts, pitcher detail pages, the composite score
+// coming back -- can be added later without touching the database or the
+// pipeline, just this file and index.html.
 
 const { createClient } = supabase;
 const client = createClient(window.USCORE_CONFIG.SUPABASE_URL, window.USCORE_CONFIG.SUPABASE_ANON_KEY);
 
-const METRIC_LABELS = {
-  adjusted_uscore: "Adjusted uScore",
-  uscore: "uScore",
-  delivery_quotient: "Delivery Quotient",
-  adj_delivery_quotient: "Adj. Delivery Quotient",
-  quotient: "Pitch Quotient",
-  usage_rate: "Usage",
-};
-
 const state = {
-  metric: "adjusted_uscore",
-  pitchType: "",
+  pitchType: "FF",
   search: "",
   rows: [],
 };
-
-async function fetchOverallLeaderboard(metric) {
-  const { data, error } = await client
-    .from("pitchers")
-    .select("player_id, pitcher_name, uscore, adjusted_uscore, delivery_quotient, adj_delivery_quotient")
-    .order(metric, { ascending: false })
-    .limit(250);
-  if (error) throw error;
-  return data.map((r) => ({ ...r, value: r[metric] }));
-}
 
 async function fetchPitchTypeLeaderboard(pitchType) {
   const { data, error } = await client
@@ -76,7 +58,7 @@ function renderUpdatedAt(iso) {
   el.textContent = "Data last refreshed " + d.toLocaleString();
 }
 
-function renderTable(rows, metricLabel) {
+function renderTable(rows) {
   const head = document.getElementById("leaderboard-head");
   const body = document.getElementById("leaderboard-body");
 
@@ -84,7 +66,8 @@ function renderTable(rows, metricLabel) {
     <tr>
       <th>#</th>
       <th>Pitcher</th>
-      <th>${metricLabel}</th>
+      <th>Pitch Quotient</th>
+      <th>Usage</th>
     </tr>
   `;
 
@@ -95,6 +78,7 @@ function renderTable(rows, metricLabel) {
       <td class="rank">${i + 1}</td>
       <td>${escapeHtml(r.pitcher_name || "")}</td>
       <td class="value">${formatValue(r.value)}</td>
+      <td class="value">${formatPercent(r.usage_rate)}</td>
     `;
     body.appendChild(tr);
   });
@@ -103,6 +87,11 @@ function renderTable(rows, metricLabel) {
 function formatValue(v) {
   if (v === null || v === undefined || Number.isNaN(v)) return "-";
   return Number(v).toFixed(3);
+}
+
+function formatPercent(v) {
+  if (v === null || v === undefined || Number.isNaN(v)) return "-";
+  return (Number(v) * 100).toFixed(1) + "%";
 }
 
 function escapeHtml(s) {
@@ -114,10 +103,7 @@ function escapeHtml(s) {
 async function loadAndRender() {
   renderStatus("Loading...");
   try {
-    const rows = state.pitchType
-      ? await fetchPitchTypeLeaderboard(state.pitchType)
-      : await fetchOverallLeaderboard(state.metric);
-
+    const rows = await fetchPitchTypeLeaderboard(state.pitchType);
     state.rows = rows;
     applyFilterAndRender();
     renderStatus("");
@@ -133,21 +119,11 @@ function applyFilterAndRender() {
     ? state.rows.filter((r) => (r.pitcher_name || "").toLowerCase().includes(q))
     : state.rows;
 
-  const label = state.pitchType
-    ? "Pitch Quotient"
-    : METRIC_LABELS[state.metric];
-
-  renderTable(filtered, label);
+  renderTable(filtered);
 }
-
-document.getElementById("metric-select").addEventListener("change", (e) => {
-  state.metric = e.target.value;
-  loadAndRender();
-});
 
 document.getElementById("pitch-select").addEventListener("change", (e) => {
   state.pitchType = e.target.value;
-  document.getElementById("metric-select").disabled = !!state.pitchType;
   loadAndRender();
 });
 
