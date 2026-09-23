@@ -10,13 +10,16 @@
 <body>
   <header class="page-header">
     <h1>uScore Leaderboard</h1>
-    <p class="subtitle">How unique is every pitcher's arsenal, pitch by pitch.</p>
+    <p class="subtitle">Real-time ratings of pitch characteristics and their uniqueness relative to the rest of the league.</p>
     <p class="updated-at" id="updated-at">Loading...</p>
   </header>
 
   <main>
     <div class="controls">
-      <input id="search" type="search" placeholder="Search pitcher..." aria-label="Search pitcher" />
+      <div class="search-wrap">
+        <input id="search" type="search" placeholder="Search a pitcher to see every pitch they throw..." aria-label="Search pitcher" autocomplete="off" />
+        <div id="suggestions" class="suggestions" hidden></div>
+      </div>
 
       <label for="pitch-select">Pitch type</label>
       <select id="pitch-select">
@@ -37,10 +40,26 @@
 
     <div id="status" class="status" role="status"></div>
 
+    <div id="player-header" class="player-header" hidden>
+      <h2 id="player-name"></h2>
+      <button id="back-to-leaderboard" type="button">&larr; Back to leaderboard</button>
+    </div>
+
     <table id="leaderboard">
       <thead id="leaderboard-head"></thead>
       <tbody id="leaderboard-body"></tbody>
     </table>
+
+    <details class="methodology">
+      <summary>How uScore works</summary>
+      <div class="methodology-body">
+        <p><strong>What it measures.</strong> uScore rates every pitch a pitcher throws by how unusual its physical characteristics are compared to everyone else who throws that <em>same</em> pitch type this season &mdash; a slider is only measured against other sliders, a sinker only against other sinkers, and so on, since "unique" means something different for each pitch shape.</p>
+        <p><strong>What goes into it.</strong> For each pitch, we take velocity, induced vertical break (rise/drop), horizontal break (side-to-side movement), spin rate, and &mdash; where Statcast publishes it &mdash; active spin%, and measure how many standard deviations each one sits from the league average for that pitch type. Movement is weighted most heavily, since a pitch's shape and deception generally matter more than raw velocity for making it hard to hit.</p>
+        <p><strong>Why usage matters.</strong> The quotient shown here also factors in how often a pitcher actually throws that pitch. A pitch with freakish characteristics that's rarely used scores lower than an equally unique pitch that's a real, trusted weapon in the pitcher's mix &mdash; the goal is to reflect the pitch's actual impact, not just its raw numbers on paper.</p>
+        <p><strong>Data and sample size.</strong> Numbers come straight from Baseball Savant's tracked pitch data for the current regular season and postseason (spring training is excluded). A pitcher needs at least 25 tracked pitches of a given type this season to appear on that pitch type's leaderboard, to keep small, noisy samples out.</p>
+        <p><strong>A caveat worth knowing.</strong> Pitch-type labels come straight from Statcast's own automatic classifier. For pitchers who throw an unusual, hybrid-shaped pitch, that classifier can occasionally split what's really one pitch across two labels (for example, tagging some of a pitcher's splitter-changeup hybrid as "Splitter" and some as "Changeup"). If a pitcher you'd expect to see isn't showing up where you'd guess, it's worth checking the neighboring pitch type.</p>
+      </div>
+    </details>
   </main>
 
   <footer>
