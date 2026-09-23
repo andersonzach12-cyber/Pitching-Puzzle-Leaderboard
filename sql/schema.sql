@@ -47,6 +47,8 @@ create table if not exists pitch_metrics (
     usage_rate       numeric,                   -- 0-1
 
     active_spin_quotient numeric,               -- 0 when active_spin_pct is null
+    delivery_modifier numeric,                  -- multiplier from how unusual this pitcher's
+                                                 -- release point is league-wide (1.0 = average delivery)
     quotient          numeric,                   -- this pitch type's contribution to uScore
 
     updated_at        timestamptz not null default now(),
