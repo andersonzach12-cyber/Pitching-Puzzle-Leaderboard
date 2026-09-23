@@ -44,6 +44,7 @@ import traceback
 from datetime import datetime, timezone
 from io import StringIO
 
+import numpy as np
 import requests
 import pandas as pd
 from supabase import create_client
@@ -565,6 +566,14 @@ def run():
         # the Supabase write path below don't know how to serialize).
         pitchers["player_id"] = pitchers["player_id"].map(int)
         pitch_metrics["player_id"] = pitch_metrics["player_id"].map(int)
+
+        # Strict JSON (which the Supabase write below requires) can't
+        # represent NaN or +/-Infinity. A z-score computation can produce
+        # Infinity in an edge case (e.g. a metric with essentially zero
+        # variance), so replace both with None on every numeric column
+        # before serializing, not just NaN.
+        pitchers = pitchers.replace([np.inf, -np.inf], np.nan)
+        pitch_metrics = pitch_metrics.replace([np.inf, -np.inf], np.nan)
 
         pitchers_rows = pitchers.where(pd.notnull(pitchers), None).to_dict(orient="records")
         pitch_rows = pitch_metrics.where(pd.notnull(pitch_metrics), None).to_dict(orient="records")
