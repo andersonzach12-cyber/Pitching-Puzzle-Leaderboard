@@ -108,6 +108,27 @@ HORIZ_WEIGHT = 0.25
 SPIN_WEIGHT = 0.10
 DELIVERY_WEIGHT_IN_USCORE = 0.3
 
+# Whether induced vertical break should reward a specific direction
+# ("signed" -- e.g. more "ride"/less drop is unambiguously better for a
+# fastball) or reward distance from league-average IVB in EITHER direction
+# ("abs" -- for slider-family pitches, a pitch that dives more than average
+# can be just as much of a weapon as one that sweeps/rises more than
+# average; there's no single "better" direction). Defaults to "signed" for
+# any pitch type not listed here.
+IVB_SHAPE = {
+    "SL": "abs", "ST": "abs", "SV": "abs",
+}
+
+# Per-pitch-type override for how much horizontal break counts toward the
+# Ceiling formula, in place of the global HORIZ_WEIGHT. Sliders and sweepers
+# get real, distinct value from horizontal movement specifically -- a
+# pitcher's slider can be a weapon because of exceptional sweep even with
+# unremarkable depth, which the default fastball-tuned weighting (where
+# vertical movement dominates) badly undersells.
+HORIZ_WEIGHT_OVERRIDE = {
+    "SL": 0.65, "ST": 0.65,
+}
+
 # Every id column Savant has used across its various CSV exports, in
 # priority order -- the first one found in a given export is treated as
 # that pitcher's id.
@@ -541,14 +562,17 @@ def compute_pitch_quotients(pitch_metrics: pd.DataFrame, active_spin_fallback: p
         )
         velo_z = zscore(group["velo"])
         ivb_z = zscore(group["ivb_in"])
+        if IVB_SHAPE.get(pt) == "abs":
+            ivb_z = ivb_z.abs()
         horiz_z = zscore(group["horizontal_in"])
         spin_z = zscore(group["spin_rpm"])
         as_weight = ACTIVE_SPIN_WEIGHT.get(pt, 0.0)
+        horiz_weight = HORIZ_WEIGHT_OVERRIDE.get(pt, HORIZ_WEIGHT)
 
         ceiling = (
             velo_z
             + IVB_WEIGHT * ivb_z
-            + HORIZ_WEIGHT * horiz_z
+            + horiz_weight * horiz_z
             + SPIN_WEIGHT * spin_z
             + as_weight * group["active_spin_quotient"]
         )
