@@ -603,15 +603,31 @@ def run():
         pitch_metrics["player_id"] = pitch_metrics["player_id"].map(int)
 
         # Strict JSON (which the Supabase write below requires) can't
-        # represent NaN or +/-Infinity. A z-score computation can produce
-        # Infinity in an edge case (e.g. a metric with essentially zero
-        # variance), so replace both with None on every numeric column
-        # before serializing, not just NaN.
-        pitchers = pitchers.replace([np.inf, -np.inf], np.nan)
-        pitch_metrics = pitch_metrics.replace([np.inf, -np.inf], np.nan)
+        # represent NaN or +/-Infinity. A pandas-level replace() was tried
+        # here first and didn't catch everything (still failed against a
+        # real run), so this instead walks the actual list-of-dicts that
+        # will be serialized and scrubs any bad float at the raw Python
+        # level -- this can't miss anything regardless of which pandas
+        # dtype or code path produced the value.
+        def sanitize_records(records: list[dict], label: str) -> list[dict]:
+            bad_counts: dict[str, int] = {}
+            for record in records:
+                for key, value in record.items():
+                    if isinstance(value, float) and math.isnan(value):
+                        record[key] = None
+                    elif isinstance(value, float) and math.isinf(value):
+                        bad_counts[key] = bad_counts.get(key, 0) + 1
+                        record[key] = None
+            if bad_counts:
+                print(f"NOTE: {label} had infinite values, replaced with blank: {bad_counts}")
+            return records
 
-        pitchers_rows = pitchers.where(pd.notnull(pitchers), None).to_dict(orient="records")
-        pitch_rows = pitch_metrics.where(pd.notnull(pitch_metrics), None).to_dict(orient="records")
+        pitchers_rows = sanitize_records(
+            pitchers.where(pd.notnull(pitchers), None).to_dict(orient="records"), "pitchers"
+        )
+        pitch_rows = sanitize_records(
+            pitch_metrics.where(pd.notnull(pitch_metrics), None).to_dict(orient="records"), "pitch_metrics"
+        )
 
         upsert_in_batches(supabase.table("pitchers"), pitchers_rows)
         upsert_in_batches(supabase.table("pitch_metrics"), pitch_rows)
