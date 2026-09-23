@@ -2,30 +2,38 @@
 uScore daily refresh pipeline.
 
 What this script does, in order:
-  1. Pulls fresh pitch-level data (velocity, movement, spin, usage, extension)
-     from Baseball Savant's "Pitch Arsenals" leaderboard.
-  2. Pulls active-spin% from Savant's active-spin leaderboard.
-  3. Pulls arm angle / release point from Savant's arm-angle leaderboard.
-  4. Recomputes the uScore model (same math as the Excel workbook: z-scored
+  1. Pulls every individual pitch thrown this season from Baseball Savant's
+     Statcast Search CSV export (the same underlying endpoint the popular
+     `pybaseball` library uses -- documented and stable, unlike the
+     "leaderboard" pages, which turned out to have several dead ends: one
+     had only outcome stats with no velocity/movement, another packed each
+     pitch type into a single unparseable column meant for Savant's own
+     chart, not for external use).
+  2. Averages that pitch-level data into one row per pitcher per pitch type
+     (velocity, spin, movement, usage, extension).
+  3. Pulls active-spin% from Savant's active-spin leaderboard.
+  4. Pulls arm angle / release point from Savant's arm-angle leaderboard.
+  5. Recomputes the uScore model (same math as the Excel workbook: z-scored
      "uniqueness" quotients per pitch type, the funky-delivery dampening fix,
      and the arsenal-diversity multiplier) fresh against THIS run's league.
-  5. Writes the results into Supabase (pitchers + pitch_metrics tables).
-  6. Logs the run (success/failure, row counts) to refresh_log.
+  6. Writes the results into Supabase (pitchers + pitch_metrics tables).
+  7. Logs the run (success/failure, row counts) to refresh_log.
 
 This is meant to run unattended once a day via GitHub Actions (see
 .github/workflows/refresh.yml). It is NOT meant to be run inside a network
 sandbox with no internet access -- it needs to reach baseballsavant.mlb.com.
 
 A NOTE ON HOW THIS WAS BUILT:
-Savant doesn't publish a documented, stable API -- every URL and column name
-below was confirmed against real responses while getting the very first
-automated runs working (several rounds: a wrong leaderboard, a wrong id
-column, wrong parameter names, etc., each one caught by print statements in
-the code below and fixed from the actual GitHub Actions log). If a future
-run ever fails after Savant changes something again, the same pattern
-applies: the log will show the real column names Savant returned, and that's
-enough to fix it -- you don't need to debug anything yourself, just send me
-the log.
+Savant's leaderboard pages don't publish a documented, stable API, so
+getting this pipeline right took several rounds against real GitHub Actions
+runs: a wrong leaderboard, a wrong id column, wrong parameter names, a
+leaderboard whose CSV wasn't actually tabular data. Each was caught by print
+statements in the code below and fixed from the actual Actions log. This
+version pulls from Savant's documented Statcast Search CSV endpoint instead
+of a leaderboard page for the core pitch data, which should be far more
+stable going forward. If a future run still fails, the same pattern
+applies: the log shows the real column names Savant returned, which is
+enough to fix it without any coding on your end -- just send me the log.
 """
 from __future__ import annotations
 
@@ -52,22 +60,22 @@ SUPABASE_SERVICE_KEY = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
 
 HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; uScoreBot/1.0)"}
 
-# Every pitch type we score: the Savant column-prefix used on the wide
-# "Pitch Arsenals" export, the internal pitch-type code, and which quotient
-# group it rolls into.
+# Every pitch type we score, its display label, and which quotient group it
+# rolls into. Keys match Savant's own 2-letter pitch_type codes exactly, so
+# no renaming is needed against the raw Statcast data.
 PITCH_TYPES = {
-    "ff": {"code": "FF", "label": "4-Seam Fastball", "group": "4-Seam"},
-    "si": {"code": "SI", "label": "Sinker",          "group": "Sinker"},
-    "fc": {"code": "FC", "label": "Cutter",          "group": "Cutter"},
-    "ch": {"code": "CH", "label": "Changeup",        "group": "Changeup"},
-    "fs": {"code": "FS", "label": "Splitter",        "group": "Changeup"},
-    "fo": {"code": "FO", "label": "Forkball",        "group": "Changeup"},
-    "cu": {"code": "CU", "label": "Curveball",       "group": "Curve"},
-    "kc": {"code": "KC", "label": "Knuckle Curve",   "group": "Curve"},
-    "cs": {"code": "CS", "label": "Slow Curve",      "group": "Curve"},
-    "sl": {"code": "SL", "label": "Slider",          "group": "Slider"},
-    "st": {"code": "ST", "label": "Sweeper",         "group": "Slider"},
-    "sv": {"code": "SV", "label": "Slurve",          "group": "Slider"},
+    "FF": {"label": "4-Seam Fastball", "group": "4-Seam"},
+    "SI": {"label": "Sinker",          "group": "Sinker"},
+    "FC": {"label": "Cutter",          "group": "Cutter"},
+    "CH": {"label": "Changeup",        "group": "Changeup"},
+    "FS": {"label": "Splitter",        "group": "Changeup"},
+    "FO": {"label": "Forkball",        "group": "Changeup"},
+    "CU": {"label": "Curveball",       "group": "Curve"},
+    "KC": {"label": "Knuckle Curve",   "group": "Curve"},
+    "CS": {"label": "Slow Curve",      "group": "Curve"},
+    "SL": {"label": "Slider",          "group": "Slider"},
+    "ST": {"label": "Sweeper",         "group": "Slider"},
+    "SV": {"label": "Slurve",          "group": "Slider"},
 }
 
 # Active-spin quotient shape per pitch type, matching the Excel model:
@@ -98,11 +106,11 @@ HORIZ_WEIGHT = 0.25
 SPIN_WEIGHT = 0.10
 DELIVERY_WEIGHT_IN_USCORE = 0.3
 
-# Every id column Savant has used across its various leaderboard CSV
-# exports, in priority order -- the first one found in a given export is
-# treated as that pitcher's id.
-PLAYER_ID_ALIASES = ["player_id", "pitcher_id", "pitcher", "entity_id", "mlbam_id", "mlb_id"]
-PLAYER_NAME_ALIASES = ["last_name, first_name", "pitcher_name", "entity_name", "name"]
+# Every id column Savant has used across its various CSV exports, in
+# priority order -- the first one found in a given export is treated as
+# that pitcher's id.
+PLAYER_ID_ALIASES = ["pitcher", "player_id", "pitcher_id", "entity_id", "mlbam_id", "mlb_id"]
+PLAYER_NAME_ALIASES = ["player_name", "last_name, first_name", "pitcher_name", "entity_name", "name"]
 
 
 def normalize_player_id(df: pd.DataFrame, source_label: str) -> pd.DataFrame:
@@ -123,132 +131,115 @@ def normalize_player_id(df: pd.DataFrame, source_label: str) -> pd.DataFrame:
 
 
 # --------------------------------------------------------------------------
-# 1. Pull pitch-level data (Velo / IVB / Horizontal break / Spin / Usage /
-#    Extension) from Savant's "Pitch Arsenals" leaderboard -- a single wide
-#    export with one row per pitcher and one group of columns per pitch
-#    type (e.g. ff_avg_speed, ff_avg_spin, si_avg_speed, si_avg_spin, ...).
+# 1. Pull every pitch thrown this season, then aggregate to pitcher x
+#    pitch-type averages. This is Savant's documented Statcast Search CSV
+#    export (https://baseballsavant.mlb.com/csv-docs) -- the same endpoint
+#    the `pybaseball` library's statcast() function uses, so it's a stable,
+#    well-tested source rather than a guess at an undocumented leaderboard.
 # --------------------------------------------------------------------------
 
-# Candidate suffixes for each metric, tried in order, per pitch-type prefix
-# (e.g. prefix "ff" + suffix "avg_speed" -> looks for column "ff_avg_speed").
-# Savant's exact naming wasn't testable from this environment, so this list
-# covers the plausible variants; the print statements below show the real
-# column names on the first run so any mismatch is a one-line fix.
-METRIC_SUFFIXES = {
-    "velo": ["avg_speed", "velo", "avg_velocity", "speed"],
-    "spin_rpm": ["avg_spin", "spin", "avg_spin_rate", "spin_rate"],
-    "ivb_in": ["avg_break_z", "break_z", "ivb", "avg_break_z_induced", "induced_break_z"],
-    "horizontal_in": ["avg_break_x", "break_x", "avg_horz_break", "horz_break"],
-    "usage_rate": ["pitch_usage", "usage", "percent", "pct"],
-    "extension_ft": ["avg_extension", "extension"],
-    "active_spin_pct": ["active_spin", "avg_active_spin"],
+STATCAST_SEARCH_URL = "https://baseballsavant.mlb.com/statcast_search/csv"
+
+# Column names Savant's per-pitch CSV export is documented to use. A few
+# plausible fallbacks are listed too in case Savant renames something --
+# the print statement below shows the real columns on every run either way.
+PITCH_COLUMN_CANDIDATES = {
+    "velo": ["release_speed"],
+    "spin_rpm": ["release_spin_rate", "release_spin"],
+    "ivb_in_raw": ["pfx_z"],           # feet; multiply by 12 for inches
+    "horizontal_in_raw": ["pfx_x", "api_break_x_arm"],  # feet; multiply by 12
+    "extension_ft": ["release_extension"],
 }
-CORE_METRICS = ["velo", "spin_rpm", "ivb_in", "horizontal_in", "usage_rate"]
 
 
-def fetch_pitch_arsenals_wide() -> pd.DataFrame:
-    url = f"https://baseballsavant.mlb.com/leaderboard/pitch-arsenals?year={SEASON}&min={MIN_PITCHES}&type=pitching&csv=true"
-    resp = requests.get(url, headers=HEADERS, timeout=30)
+def fetch_pitch_events() -> pd.DataFrame:
+    """Every individual pitch thrown by any pitcher this season, as one row
+    per pitch, straight from Savant's Statcast Search CSV export."""
+    start = f"{SEASON}-01-01"
+    end = datetime.now().strftime("%Y-%m-%d")
+    params = {
+        "all": "true",
+        "hfGT": "R|PO|S|",  # regular season, postseason, spring training
+        "hfSea": f"{SEASON}|",
+        "player_type": "pitcher",
+        "game_date_gt": start,
+        "game_date_lt": end,
+        "min_pitches": "0",
+        "min_results": "0",
+        "group_by": "name",
+        "sort_col": "pitches",
+        "player_event_sort": "h_launch_speed",
+        "sort_order": "desc",
+        "min_abs": "0",
+        "type": "details",
+    }
+    resp = requests.get(STATCAST_SEARCH_URL, params=params, headers=HEADERS, timeout=180)
     resp.raise_for_status()
-    raw = pd.read_csv(StringIO(resp.text))
-    print("pitch-arsenals (wide) columns:", list(raw.columns))
-    return raw
+    df = pd.read_csv(StringIO(resp.text), low_memory=False)
+    print(f"statcast_search returned {len(df)} pitch rows, {len(df.columns)} columns")
+    print("statcast_search columns (first 40):", list(df.columns)[:40])
+    return df
 
 
-def melt_pitch_arsenals(raw: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame | None]:
-    """Reshape the wide (one row per pitcher) Pitch Arsenals export into a
-    long table (one row per pitcher per pitch type), matching the shape the
-    rest of the pipeline expects. Also pulls out a usage-weighted average
-    extension per pitcher, if extension is present in this export, to feed
-    the delivery quotient."""
-    id_col = next((c for c in PLAYER_ID_ALIASES if c in raw.columns), None)
-    if id_col is None:
+def compute_pitch_metrics_from_events(events: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Aggregate raw pitch-level rows into (a) one row per pitcher per pitch
+    type with average velo/spin/movement/usage, and (b) one row per pitcher
+    with a usage-weighted average extension."""
+    df = normalize_player_id(events, "statcast_search")
+
+    def first_present(candidates: list[str]) -> str | None:
+        return next((c for c in candidates if c in df.columns), None)
+
+    resolved = {metric: first_present(cands) for metric, cands in PITCH_COLUMN_CANDIDATES.items()}
+    print("statcast_search resolved columns:", resolved)
+    missing = [m for m, c in resolved.items() if c is None]
+    if missing:
         raise RuntimeError(
-            f"pitch-arsenals: no player-id column found among {PLAYER_ID_ALIASES} "
-            f"-- columns were {list(raw.columns)}"
+            f"statcast_search: couldn't find columns for {missing} among "
+            f"{PITCH_COLUMN_CANDIDATES}. Actual columns were: {list(df.columns)}"
         )
 
-    rows = []
-    ext_rows = []
-    matched_summary = {}
-    for prefix, info in PITCH_TYPES.items():
-        found = {}
-        for metric, suffixes in METRIC_SUFFIXES.items():
-            found[metric] = next(
-                (f"{prefix}_{suf}" for suf in suffixes if f"{prefix}_{suf}" in raw.columns), None
-            )
-        matched_summary[prefix] = found
+    if "pitch_type" not in df.columns:
+        raise RuntimeError(f"statcast_search: no 'pitch_type' column. Columns were: {list(df.columns)}")
 
-        if not all(found[m] for m in CORE_METRICS):
-            continue  # can't build usable rows for this pitch type -- skip it
+    df = df[df["pitch_type"].isin(PITCH_TYPES.keys())].copy()
+    df["velo"] = pd.to_numeric(df[resolved["velo"]], errors="coerce")
+    df["spin_rpm"] = pd.to_numeric(df[resolved["spin_rpm"]], errors="coerce")
+    df["ivb_in"] = pd.to_numeric(df[resolved["ivb_in_raw"]], errors="coerce") * 12
+    df["horizontal_in"] = pd.to_numeric(df[resolved["horizontal_in_raw"]], errors="coerce") * 12
+    df["extension_ft"] = pd.to_numeric(df[resolved["extension_ft"]], errors="coerce")
 
-        for _, row in raw.iterrows():
-            usage = row[found["usage_rate"]]
-            if pd.isna(usage) or usage == 0:
-                continue
-            usage_rate = usage / 100.0 if usage > 1 else usage
-            rec = {
-                "player_id": row[id_col],
-                "pitch_type": info["code"],
-                "velo": row[found["velo"]],
-                "spin_rpm": row[found["spin_rpm"]],
-                "ivb_in": row[found["ivb_in"]],
-                "horizontal_in": row[found["horizontal_in"]],
-                "usage_rate": usage_rate,
-            }
-            if found["active_spin_pct"]:
-                rec["active_spin_pct"] = row[found["active_spin_pct"]]
-            rows.append(rec)
+    per_pitcher_totals = df.groupby("player_id").size().rename("total_pitches")
 
-            if found["extension_ft"]:
-                ext_val = row[found["extension_ft"]]
-                if pd.notna(ext_val):
-                    ext_rows.append({"player_id": row[id_col], "extension_ft": ext_val, "weight": usage_rate})
+    grouped = df.groupby(["player_id", "pitch_type"]).agg(
+        velo=("velo", "mean"),
+        spin_rpm=("spin_rpm", "mean"),
+        ivb_in=("ivb_in", "mean"),
+        horizontal_in=("horizontal_in", "mean"),
+        n_pitches=("velo", "size"),
+    ).reset_index()
 
-    print("pitch-arsenals matched columns per pitch type:", matched_summary)
+    grouped = grouped.merge(per_pitcher_totals, on="player_id", how="left")
+    grouped["usage_rate"] = grouped["n_pitches"] / grouped["total_pitches"]
+    grouped = grouped[grouped["n_pitches"] >= MIN_PITCHES].copy()
+    grouped["active_spin_pct"] = None
 
-    if not rows:
-        raise RuntimeError(
-            "pitch-arsenals: couldn't find velocity/spin/movement/usage columns for ANY "
-            f"pitch type. Matched-column summary: {matched_summary}. "
-            f"Full column list was: {list(raw.columns)}"
-        )
+    pitch_metrics = grouped[[
+        "player_id", "pitch_type", "velo", "spin_rpm", "ivb_in", "horizontal_in",
+        "usage_rate", "active_spin_pct",
+    ]]
 
-    arsenal = pd.DataFrame(rows)
-    arsenal = normalize_player_id(arsenal, "pitch-arsenals")
-    if "active_spin_pct" not in arsenal.columns:
-        arsenal["active_spin_pct"] = None
-
-    extension = None
-    if ext_rows:
-        ext_df = pd.DataFrame(ext_rows)
-        ext_df = normalize_player_id(ext_df, "pitch-arsenals (extension)")
-
-        def weighted_avg(g: pd.DataFrame) -> float:
-            w = g["weight"]
-            return (g["extension_ft"] * w).sum() / w.sum() if w.sum() else g["extension_ft"].mean()
-
-        extension = (
-            ext_df.groupby("player_id")
-            .apply(weighted_avg, include_groups=False)
-            .reset_index(name="extension_ft")
-        )
+    ext = df.dropna(subset=["extension_ft"])
+    if ext.empty:
+        extension = pd.DataFrame(columns=["player_id", "extension_ft"])
     else:
-        print("NOTE: pitch-arsenals export doesn't include an extension column -- "
-              "extension_ft will stay blank this run.")
+        extension = ext.groupby("player_id")["extension_ft"].mean().reset_index()
 
-    return arsenal, extension
-
-
-def fetch_all_pitch_arsenal() -> tuple[pd.DataFrame, pd.DataFrame | None]:
-    raw = fetch_pitch_arsenals_wide()
-    return melt_pitch_arsenals(raw)
+    return pitch_metrics, extension
 
 
 # --------------------------------------------------------------------------
-# 2. Pull active-spin data (only used as a fallback -- the Pitch Arsenals
-#    export above may already include it per pitch type; this fills in
-#    anything it's missing from Savant's dedicated active-spin leaderboard).
+# 2. Pull active-spin data
 # --------------------------------------------------------------------------
 
 def fetch_active_spin() -> pd.DataFrame:
@@ -265,9 +256,7 @@ def fetch_active_spin() -> pd.DataFrame:
 
     # Savant's active-spin export is wide (one column per pitch type, e.g.
     # "active_spin_fourseam", "active_spin_sinker", ...). Melt it to long
-    # form so it lines up with fetch_all_pitch_arsenal()'s one-row-per-type
-    # shape. Column names are matched loosely (lowercased, no separators)
-    # since Savant has changed these before.
+    # form so it lines up with pitch_metrics' one-row-per-type shape.
     spin_cols = [c for c in raw.columns if "active_spin" in c.lower()]
     col_to_type = {
         "fourseam": "FF", "4seam": "FF", "ff": "FF",
@@ -297,7 +286,7 @@ def fetch_active_spin() -> pd.DataFrame:
                 long_rows.append({"player_id": row[id_col], "pitch_type": pt, "active_spin_pct": val})
     if not long_rows:
         print("WARNING: active-spin export matched none of the expected pitch-type "
-              "column names -- falling back to whatever the Pitch Arsenals export had. "
+              "column names -- active-spin quotients will be 0 for everyone this run. "
               f"Raw columns were: {list(raw.columns)}")
         return pd.DataFrame(columns=["player_id", "pitch_type", "active_spin_pct"])
     result = pd.DataFrame(long_rows)
@@ -306,15 +295,15 @@ def fetch_active_spin() -> pd.DataFrame:
 
 # --------------------------------------------------------------------------
 # 3. Pull delivery data (arm angle, release point; extension comes from the
-#    Pitch Arsenals export above when available)
+#    pitch-event aggregation above)
 # --------------------------------------------------------------------------
 
 def fetch_delivery_metrics() -> pd.DataFrame:
     """One row per pitcher: arm angle, release height, horizontal release
-    point (extension is filled in separately, from the Pitch Arsenals pull,
-    when that export includes it). Returns columns: player_id, pitcher_name,
-    extension_ft (blank placeholder), arm_angle_deg, release_height_ft,
-    horizontal_release_ft."""
+    point (extension is filled in separately, from the pitch-event
+    aggregation, since this leaderboard doesn't publish it). Returns
+    columns: player_id, pitcher_name, extension_ft (blank placeholder),
+    arm_angle_deg, release_height_ft, horizontal_release_ft."""
     url = f"https://baseballsavant.mlb.com/leaderboard/pitcher-arm-angles?season={SEASON}&min=1&csv=true"
     resp = requests.get(url, headers=HEADERS, timeout=30)
     resp.raise_for_status()
@@ -322,8 +311,8 @@ def fetch_delivery_metrics() -> pd.DataFrame:
     print("pitcher-arm-angles columns:", list(raw.columns))
 
     name_rename = {alias: "pitcher_name" for alias in PLAYER_NAME_ALIASES}
-    # Confirmed live (2026 season) column names from this leaderboard's CSV
-    # export: 'ball_angle' (arm angle), 'release_ball_z' (release height),
+    # Confirmed live column names from this leaderboard's CSV export:
+    # 'ball_angle' (arm angle), 'release_ball_z' (release height),
     # 'relative_release_ball_x' (horizontal release point).
     metric_rename = {
         "ball_angle": "arm_angle_deg",
@@ -336,9 +325,7 @@ def fetch_delivery_metrics() -> pd.DataFrame:
     rename = {**name_rename, **metric_rename}
     df = raw.rename(columns={c: rename[c] for c in raw.columns if c in rename})
     df = normalize_player_id(df, "pitcher-arm-angles")
-
-    if "extension_ft" not in df.columns:
-        df["extension_ft"] = None
+    df["extension_ft"] = None
 
     keep = ["player_id", "pitcher_name", "extension_ft", "arm_angle_deg",
             "release_height_ft", "horizontal_release_ft"]
@@ -381,11 +368,9 @@ def active_spin_quotient(series: pd.Series, shape: str | None) -> pd.Series:
     return out
 
 
-def compute_pitch_metrics(arsenal: pd.DataFrame, active_spin_fallback: pd.DataFrame) -> pd.DataFrame:
-    df = arsenal.copy()
+def compute_pitch_quotients(pitch_metrics: pd.DataFrame, active_spin_fallback: pd.DataFrame) -> pd.DataFrame:
+    df = pitch_metrics.copy()
 
-    # Fill in active-spin from the dedicated active-spin leaderboard only
-    # where the Pitch Arsenals export didn't already have it.
     if not active_spin_fallback.empty:
         df = df.merge(
             active_spin_fallback, on=["player_id", "pitch_type"], how="left", suffixes=("", "_fallback")
@@ -438,7 +423,7 @@ def compute_pitchers(pitch_metrics: pd.DataFrame, delivery: pd.DataFrame,
         for c in ["extension_ft", "arm_angle_deg", "release_height_ft", "horizontal_release_ft"]
     )
 
-    group_of = {info["code"]: info["group"] for info in PITCH_TYPES.values()}
+    group_of = {pt: info["group"] for pt, info in PITCH_TYPES.items()}
     pitch_metrics = pitch_metrics.copy()
     pitch_metrics["group"] = pitch_metrics["pitch_type"].map(group_of)
     group_quotients = pitch_metrics.groupby(["player_id", "group"])["quotient"].sum().unstack(fill_value=0.0)
@@ -500,17 +485,32 @@ def run():
     log_id = log_row["id"]
 
     try:
-        arsenal, extension_from_arsenal = fetch_all_pitch_arsenal()
+        events = fetch_pitch_events()
+        pitch_metrics_raw, extension_from_events = compute_pitch_metrics_from_events(events)
         active_spin = fetch_active_spin()
         delivery = fetch_delivery_metrics()
 
-        if extension_from_arsenal is not None:
+        if not extension_from_events.empty:
             delivery = delivery.drop(columns=["extension_ft"]).merge(
-                extension_from_arsenal, on="player_id", how="left"
+                extension_from_events, on="player_id", how="left"
             )
 
+        # Pitcher names aren't in the arm-angle export in every Savant
+        # version, so build the name lookup from whichever source has it:
+        # prefer arm-angles (already filtered to real pitchers), fall back
+        # to the raw pitch events (player_name column) if it's blank there.
         pitcher_names = delivery[["player_id", "pitcher_name"]].drop_duplicates()
-        pitch_metrics = compute_pitch_metrics(arsenal, active_spin)
+        if pitcher_names["pitcher_name"].isna().all():
+            name_col = next((c for c in PLAYER_NAME_ALIASES if c in events.columns), None)
+            if name_col:
+                events_named = normalize_player_id(events.copy(), "statcast_search (names)")
+                pitcher_names = (
+                    events_named[["player_id", name_col]]
+                    .rename(columns={name_col: "pitcher_name"})
+                    .drop_duplicates(subset=["player_id"])
+                )
+
+        pitch_metrics = compute_pitch_quotients(pitch_metrics_raw, active_spin)
         pitchers = compute_pitchers(pitch_metrics, delivery, pitcher_names)
 
         pitchers = pitchers.dropna(subset=["player_id"])
