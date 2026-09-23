@@ -119,6 +119,39 @@ main {
   margin-bottom: 0.5rem;
 }
 
+.league-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.5rem 1.25rem;
+  background: var(--accent-bg);
+  border-radius: 8px;
+  padding: 0.6rem 0.9rem;
+  margin-bottom: 0.85rem;
+  font-size: 0.85rem;
+}
+
+.league-strip .league-strip-title {
+  font-weight: 600;
+  color: var(--accent);
+  margin-right: 0.25rem;
+}
+
+.league-strip .stat {
+  color: var(--ink);
+  white-space: nowrap;
+}
+
+.league-strip .stat .stat-label {
+  color: var(--muted);
+  margin-right: 0.3rem;
+}
+
+.league-strip .stat .stat-value {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
 table {
   width: 100%;
   border-collapse: collapse;
