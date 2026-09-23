@@ -446,60 +446,34 @@ def active_spin_quotient(series: pd.Series, shape: str | None) -> pd.Series:
     return out
 
 
-def compute_pitch_quotients(pitch_metrics: pd.DataFrame, active_spin_fallback: pd.DataFrame) -> pd.DataFrame:
-    df = pitch_metrics.copy()
-
-    if not active_spin_fallback.empty:
-        df = df.merge(
-            active_spin_fallback, on=["player_id", "pitch_type"], how="left", suffixes=("", "_fallback")
-        )
-        if "active_spin_pct_fallback" in df.columns:
-            df["active_spin_pct"] = df["active_spin_pct"].fillna(df["active_spin_pct_fallback"])
-            df = df.drop(columns=["active_spin_pct_fallback"])
-
-    out_frames = []
-    for pt, group in df.groupby("pitch_type"):
-        group = group.copy()
-        group["active_spin_quotient"] = active_spin_quotient(
-            group["active_spin_pct"], ACTIVE_SPIN_SHAPE.get(pt)
-        )
-        velo_z = zscore(group["velo"])
-        ivb_z = zscore(group["ivb_in"])
-        horiz_z = zscore(group["horizontal_in"])
-        spin_z = zscore(group["spin_rpm"])
-        as_weight = ACTIVE_SPIN_WEIGHT.get(pt, 0.0)
-
-        ceiling = (
-            velo_z
-            + IVB_WEIGHT * ivb_z
-            + HORIZ_WEIGHT * horiz_z
-            + SPIN_WEIGHT * spin_z
-            + as_weight * group["active_spin_quotient"]
-        )
-        group["quotient"] = ceiling * group["usage_rate"]
-        out_frames.append(group)
-
-    result = pd.concat(out_frames, ignore_index=True)
-    return result[[
-        "player_id", "pitch_type", "velo", "ivb_in", "horizontal_in", "spin_rpm",
-        "active_spin_pct", "usage_rate", "active_spin_quotient", "quotient",
-    ]]
+DELIVERY_MODIFIER_WEIGHT = 0.15  # how much a league-relative "how unusual is this
+                                  # delivery" z-score shifts every pitch's quotient
+DELIVERY_MODIFIER_MIN = 0.85
+DELIVERY_MODIFIER_MAX = 1.20
 
 
-def compute_pitchers(pitch_metrics: pd.DataFrame, delivery: pd.DataFrame,
-                      pitcher_names: pd.DataFrame) -> pd.DataFrame:
-    # `delivery` (the arm-angle leaderboard export) only covers a subset of
-    # pitchers -- a pitcher can clear MIN_PITCHES in the full-season pitch
-    # aggregation and appear in `pitch_metrics` without showing up on that
-    # leaderboard. The `pitchers` table has to contain every player_id that
-    # `pitch_metrics` references (pitch_metrics.player_id is a foreign key
-    # into pitchers), so build the full player universe as the union of
-    # both sources first, then left-merge delivery's fields onto it --
-    # pitchers missing from the arm-angle export just get blank delivery
-    # metrics (handled below via fillna(0) on the z-scores) rather than
-    # being dropped from the database entirely.
+def build_delivery_quotients(pitch_metrics_player_ids: pd.Series, delivery: pd.DataFrame) -> pd.DataFrame:
+    """One row per pitcher with delivery z-scores, delivery_quotient/
+    adj_delivery_quotient, and a bounded delivery_modifier -- shared by both
+    the per-pitch quotient (as a multiplier, since an unusual release point
+    plausibly makes every pitch a pitcher throws harder to pick up, not just
+    one) and the pitchers table's own delivery columns, so the two can never
+    drift out of sync with each other.
+
+    `delivery` (the arm-angle leaderboard export) only covers a subset of
+    pitchers -- a pitcher can clear MIN_PITCHES in the full-season pitch
+    aggregation and appear in `pitch_metrics` without showing up on that
+    leaderboard. Every player_id that pitch_metrics references needs a row
+    here regardless (pitch_metrics.player_id is a foreign key into
+    pitchers), so build the full player universe as the union of both
+    sources first, then left-merge delivery's fields onto it -- pitchers
+    missing from the arm-angle export just get a neutral (1.0) modifier and
+    blank delivery metrics rather than being dropped entirely.
+    """
+    known_ids = set(delivery["player_id"])  # players actually present on the arm-angle leaderboard
+
     all_player_ids = pd.Index(
-        pd.unique(pd.concat([delivery["player_id"], pitch_metrics["player_id"]], ignore_index=True)),
+        pd.unique(pd.concat([delivery["player_id"], pitch_metrics_player_ids], ignore_index=True)),
         name="player_id",
     )
     base = pd.DataFrame({"player_id": all_player_ids})
@@ -521,6 +495,82 @@ def compute_pitchers(pitch_metrics: pd.DataFrame, delivery: pd.DataFrame,
         for c in ["extension_ft", "arm_angle_deg", "release_height_ft", "horizontal_release_ft"]
     )
 
+    # A second, "meta" z-score: not how unusual the delivery is in absolute
+    # terms, but how unusual it is relative to *other pitchers'* deliveries
+    # this season. That keeps the modifier well-behaved and centered on 1.0
+    # for a dead-average delivery, regardless of what scale adj_delivery_quotient
+    # happens to land on in a given season, then bounded so no single pitcher's
+    # delivery can swing every one of his pitches too far in either direction.
+    delivery_uniqueness_z = zscore(delivery["adj_delivery_quotient"]).fillna(0.0)
+    delivery["delivery_modifier"] = (
+        1.0 + DELIVERY_MODIFIER_WEIGHT * delivery_uniqueness_z
+    ).clip(DELIVERY_MODIFIER_MIN, DELIVERY_MODIFIER_MAX)
+
+    # A pitcher missing from the arm-angle leaderboard has no real delivery
+    # reading at all -- their z-scores were filled with 0 above just so the
+    # rest of the math doesn't break, but 0 isn't "an average delivery," it's
+    # "we don't know." Zscoring that placeholder against real deliveries
+    # tends to land below the pack (most real deliveries pull the mean above
+    # zero), which would incorrectly *penalize* pitchers for missing data
+    # instead of staying neutral. Force those rows back to 1.0 explicitly.
+    delivery.loc[~delivery["player_id"].isin(known_ids), "delivery_modifier"] = 1.0
+
+    return delivery
+
+
+def compute_pitch_quotients(pitch_metrics: pd.DataFrame, active_spin_fallback: pd.DataFrame,
+                             delivery_modifiers: pd.DataFrame) -> pd.DataFrame:
+    df = pitch_metrics.copy()
+
+    if not active_spin_fallback.empty:
+        df = df.merge(
+            active_spin_fallback, on=["player_id", "pitch_type"], how="left", suffixes=("", "_fallback")
+        )
+        if "active_spin_pct_fallback" in df.columns:
+            df["active_spin_pct"] = df["active_spin_pct"].fillna(df["active_spin_pct_fallback"])
+            df = df.drop(columns=["active_spin_pct_fallback"])
+
+    df = df.merge(delivery_modifiers[["player_id", "delivery_modifier"]], on="player_id", how="left")
+    df["delivery_modifier"] = df["delivery_modifier"].fillna(1.0)
+
+    out_frames = []
+    for pt, group in df.groupby("pitch_type"):
+        group = group.copy()
+        group["active_spin_quotient"] = active_spin_quotient(
+            group["active_spin_pct"], ACTIVE_SPIN_SHAPE.get(pt)
+        )
+        velo_z = zscore(group["velo"])
+        ivb_z = zscore(group["ivb_in"])
+        horiz_z = zscore(group["horizontal_in"])
+        spin_z = zscore(group["spin_rpm"])
+        as_weight = ACTIVE_SPIN_WEIGHT.get(pt, 0.0)
+
+        ceiling = (
+            velo_z
+            + IVB_WEIGHT * ivb_z
+            + HORIZ_WEIGHT * horiz_z
+            + SPIN_WEIGHT * spin_z
+            + as_weight * group["active_spin_quotient"]
+        )
+        # Release characteristics (extension, arm angle, release point) make
+        # every pitch a pitcher throws harder to pick up, not just the pitch
+        # itself in isolation -- so the delivery modifier applies here, to
+        # every pitch type, rather than only to a composite pitcher score.
+        group["quotient"] = ceiling * group["usage_rate"] * group["delivery_modifier"]
+        out_frames.append(group)
+
+    result = pd.concat(out_frames, ignore_index=True)
+    return result[[
+        "player_id", "pitch_type", "velo", "ivb_in", "horizontal_in", "spin_rpm",
+        "active_spin_pct", "usage_rate", "active_spin_quotient", "delivery_modifier", "quotient",
+    ]]
+
+
+def compute_pitchers(pitch_metrics: pd.DataFrame, delivery: pd.DataFrame,
+                      pitcher_names: pd.DataFrame) -> pd.DataFrame:
+    # `delivery` here is already the full, unioned, z-scored frame built by
+    # build_delivery_quotients() -- covers every player_id in pitch_metrics,
+    # not just the arm-angle leaderboard's own subset.
     group_of = {pt: info["group"] for pt, info in PITCH_TYPES.items()}
     pitch_metrics = pitch_metrics.copy()
     pitch_metrics["group"] = pitch_metrics["pitch_type"].map(group_of)
@@ -636,9 +686,15 @@ def run():
             subset=["player_id"], keep="first"
         )
 
-        pitch_metrics = compute_pitch_quotients(pitch_metrics_raw, active_spin)
+        # Built once, ahead of the per-pitch quotients, so the same delivery
+        # z-scores and modifier feed both the per-pitch quotient (as a
+        # multiplier) and the pitchers table's own delivery columns without
+        # computing them twice or letting the two drift apart.
+        delivery_full = build_delivery_quotients(pitch_metrics_raw["player_id"], delivery)
+
+        pitch_metrics = compute_pitch_quotients(pitch_metrics_raw, active_spin, delivery_full)
         pitch_metrics["season"] = SEASON  # required by the pitch_metrics table's NOT NULL constraint
-        pitchers = compute_pitchers(pitch_metrics, delivery, pitcher_names)
+        pitchers = compute_pitchers(pitch_metrics, delivery_full, pitcher_names)
 
         pitchers = pitchers.dropna(subset=["player_id"])
         pitch_metrics = pitch_metrics.dropna(subset=["player_id"])
