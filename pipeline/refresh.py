@@ -40,6 +40,7 @@ from __future__ import annotations
 import os
 import sys
 import math
+import time
 import traceback
 from datetime import datetime, timezone
 from io import StringIO
@@ -155,6 +156,43 @@ PITCH_COLUMN_CANDIDATES = {
 
 STATCAST_SEARCH_ROW_CAP = 25000  # Savant silently caps a single request at this many rows
 CHUNK_DAYS = 3  # small enough that even the busiest 3-day stretch of a full slate stays under the cap
+MAX_RETRIES = 4
+RETRY_BACKOFF_SECONDS = 5  # doubles each retry: 5s, 10s, 20s, 40s
+
+
+def get_with_retries(url: str, params: dict | None = None, timeout: int = 60) -> requests.Response:
+    """A plain requests.get, but retried with exponential backoff on
+    transient failures (connection errors, timeouts, and 5xx server
+    errors). Savant's endpoints occasionally return a one-off 502/503 under
+    load -- across ~50-90 requests in a full pipeline run, hitting that at
+    least once is expected, and a retry almost always clears it. A 4xx
+    error (a real, permanent problem like a bad URL) is NOT retried -- it
+    fails immediately, same as before, so a genuine bug still surfaces
+    right away instead of being masked by retries."""
+    last_exc = None
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            resp = requests.get(url, params=params, headers=HEADERS, timeout=timeout)
+            if resp.status_code >= 500:
+                raise requests.exceptions.HTTPError(
+                    f"{resp.status_code} Server Error for url: {resp.url}", response=resp
+                )
+            resp.raise_for_status()
+            return resp
+        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout,
+                requests.exceptions.HTTPError) as e:
+            is_server_or_network_error = (
+                not isinstance(e, requests.exceptions.HTTPError)
+                or (e.response is not None and e.response.status_code >= 500)
+            )
+            last_exc = e
+            if not is_server_or_network_error or attempt == MAX_RETRIES:
+                raise
+            wait = RETRY_BACKOFF_SECONDS * (2 ** (attempt - 1))
+            print(f"WARNING: request to {url} failed ({e}) -- retrying in {wait}s "
+                  f"(attempt {attempt}/{MAX_RETRIES})")
+            time.sleep(wait)
+    raise last_exc  # pragma: no cover -- loop always returns or raises above
 
 
 def _fetch_pitch_events_chunk(start: str, end: str) -> pd.DataFrame:
@@ -174,8 +212,7 @@ def _fetch_pitch_events_chunk(start: str, end: str) -> pd.DataFrame:
         "min_abs": "0",
         "type": "details",
     }
-    resp = requests.get(STATCAST_SEARCH_URL, params=params, headers=HEADERS, timeout=180)
-    resp.raise_for_status()
+    resp = get_with_retries(STATCAST_SEARCH_URL, params=params, timeout=180)
     df = pd.read_csv(StringIO(resp.text), low_memory=False)
     if len(df) >= STATCAST_SEARCH_ROW_CAP:
         print(f"WARNING: chunk {start}..{end} returned {len(df)} rows -- likely hit Savant's "
@@ -289,8 +326,7 @@ def fetch_active_spin() -> pd.DataFrame:
     types simply won't have a row here, which is expected (handled below by
     treating missing = None, not 0)."""
     url = f"https://baseballsavant.mlb.com/leaderboard/active-spin?year={SEASON}&csv=true"
-    resp = requests.get(url, headers=HEADERS, timeout=30)
-    resp.raise_for_status()
+    resp = get_with_retries(url, timeout=30)
     raw = pd.read_csv(StringIO(resp.text))
     print("active-spin columns:", list(raw.columns))
 
@@ -345,8 +381,7 @@ def fetch_delivery_metrics() -> pd.DataFrame:
     columns: player_id, pitcher_name, extension_ft (blank placeholder),
     arm_angle_deg, release_height_ft, horizontal_release_ft."""
     url = f"https://baseballsavant.mlb.com/leaderboard/pitcher-arm-angles?season={SEASON}&min=1&csv=true"
-    resp = requests.get(url, headers=HEADERS, timeout=30)
-    resp.raise_for_status()
+    resp = get_with_retries(url, timeout=30)
     raw = pd.read_csv(StringIO(resp.text))
     print("pitcher-arm-angles columns:", list(raw.columns))
 
