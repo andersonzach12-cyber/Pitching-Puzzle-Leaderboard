@@ -46,7 +46,7 @@ let searchDebounceTimer = null;
 async function fetchPitchTypeLeaderboard(pitchType) {
   const { data, error } = await client
     .from("pitch_metrics")
-    .select("player_id, quotient, usage_rate, velo, ivb_in, horizontal_in, spin_rpm, active_spin_pct, pitchers(pitcher_name)")
+    .select("player_id, quotient, usage_rate, velo, ivb_in, horizontal_in, spin_rpm, active_spin_pct, delivery_modifier, pitchers(pitcher_name)")
     .eq("pitch_type", pitchType)
     .order("quotient", { ascending: false })
     .limit(250);
@@ -61,6 +61,7 @@ async function fetchPitchTypeLeaderboard(pitchType) {
     horizontal_in: r.horizontal_in,
     spin_rpm: r.spin_rpm,
     active_spin_pct: r.active_spin_pct,
+    delivery_modifier: r.delivery_modifier,
   }));
 }
 
@@ -97,7 +98,7 @@ async function getRank(pitchType, quotient) {
 async function fetchArsenal(playerId) {
   const { data, error } = await client
     .from("pitch_metrics")
-    .select("pitch_type, velo, ivb_in, horizontal_in, spin_rpm, active_spin_pct, usage_rate, quotient")
+    .select("pitch_type, velo, ivb_in, horizontal_in, spin_rpm, active_spin_pct, delivery_modifier, usage_rate, quotient")
     .eq("player_id", playerId)
     .order("quotient", { ascending: false });
   if (error) throw error;
@@ -215,6 +216,7 @@ function buildDetailPanel(row, cloud, pitchType) {
           <dt>Spin rate</dt><dd>${formatStat(row.spin_rpm, 0, " rpm")}</dd>
           <dt>Active spin</dt><dd>${row.active_spin_pct == null ? "n/a" : formatStat(row.active_spin_pct, 1, "%")}</dd>
           <dt>Usage</dt><dd>${formatPercent(row.usage_rate)}</dd>
+          <dt>Delivery modifier</dt><dd title="How unusual this pitcher's release point is league-wide -- 1.00 is a perfectly average delivery">${formatStat(row.delivery_modifier, 2, "&times;")}</dd>
           <dt>Quotient</dt><dd>${formatValue(row.value != null ? row.value : row.quotient)}</dd>
         </dl>
       </div>
