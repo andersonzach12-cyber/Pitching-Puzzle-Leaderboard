@@ -4,6 +4,7 @@
   --line: #e3e3e3;
   --accent: #14532d;
   --accent-bg: #eaf4ec;
+  --accent-strong: #1f7a42;
   --bg: #fafaf8;
 }
 
@@ -31,6 +32,8 @@ body {
 .subtitle {
   margin: 0;
   color: var(--muted);
+  max-width: 40rem;
+  margin: 0 auto;
 }
 
 .updated-at {
@@ -53,22 +56,60 @@ main {
   margin-bottom: 1rem;
 }
 
+.search-wrap {
+  position: relative;
+  flex: 1 1 240px;
+}
+
 .controls input,
 .controls select {
   padding: 0.5rem 0.6rem;
   border: 1px solid var(--line);
   border-radius: 6px;
   font-size: 0.95rem;
+  width: 100%;
 }
 
-.controls input {
-  flex: 1 1 200px;
+.controls select {
+  width: auto;
 }
 
 .controls label {
   font-size: 0.85rem;
   color: var(--muted);
   margin-left: 0.25rem;
+}
+
+.suggestions {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  background: white;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+  z-index: 10;
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+.suggestions button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 0.5rem 0.75rem;
+  border: none;
+  background: none;
+  font-size: 0.9rem;
+  cursor: pointer;
+  color: var(--ink);
+}
+
+.suggestions button:hover,
+.suggestions button:focus {
+  background: var(--accent-bg);
+  outline: none;
 }
 
 .status {
@@ -98,17 +139,34 @@ th {
   background: var(--accent-bg);
   color: var(--accent);
   font-weight: 600;
-  cursor: pointer;
   user-select: none;
   white-space: nowrap;
+}
+
+th.sortable {
+  cursor: pointer;
 }
 
 th.sortable:hover {
   text-decoration: underline;
 }
 
-tbody tr:hover {
+th .sort-arrow {
+  font-size: 0.75em;
+  margin-left: 0.15rem;
+  opacity: 0.7;
+}
+
+tbody tr.data-row {
+  cursor: pointer;
+}
+
+tbody tr.data-row:hover {
   background: #f6f8f6;
+}
+
+tbody tr.data-row.expanded {
+  background: var(--accent-bg);
 }
 
 td.rank {
@@ -119,6 +177,145 @@ td.rank {
 td.value {
   font-variant-numeric: tabular-nums;
   font-weight: 600;
+}
+
+/* Quick-scan color tiers for the quotient column -- darker/stronger accent
+   means a more unique pitch, so the eye can find the standouts without
+   reading every number. */
+td.value.tier-elite {
+  background: var(--accent);
+  color: white;
+  border-radius: 4px;
+}
+
+td.value.tier-strong {
+  background: var(--accent-strong);
+  color: white;
+  border-radius: 4px;
+}
+
+td.value.tier-good {
+  background: var(--accent-bg);
+  color: var(--accent);
+  border-radius: 4px;
+}
+
+.detail-row td {
+  background: #fbfdfb;
+  padding: 0;
+}
+
+.detail-panel {
+  padding: 1rem 1.25rem 1.25rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.5rem;
+}
+
+.detail-stats {
+  flex: 1 1 200px;
+  min-width: 180px;
+}
+
+.detail-stats dl {
+  margin: 0;
+  display: grid;
+  grid-template-columns: auto auto;
+  gap: 0.35rem 0.75rem;
+}
+
+.detail-stats dt {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.detail-stats dd {
+  margin: 0;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.detail-chart {
+  flex: 1 1 280px;
+  min-width: 260px;
+}
+
+.detail-chart svg {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+.detail-chart .chart-caption {
+  margin: 0.4rem 0 0;
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+.detail-loading {
+  padding: 1rem 1.25rem;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.player-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.player-header h2 {
+  margin: 0;
+  font-size: 1.3rem;
+}
+
+.player-header button {
+  background: none;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 0.35rem 0.7rem;
+  font-size: 0.85rem;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.player-header button:hover {
+  background: var(--accent-bg);
+  color: var(--accent);
+}
+
+.methodology {
+  margin-top: 2rem;
+  background: white;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0.25rem 1.25rem;
+}
+
+.methodology summary {
+  cursor: pointer;
+  padding: 0.85rem 0;
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.methodology-body {
+  padding-bottom: 1rem;
+  font-size: 0.92rem;
+  line-height: 1.55;
+  color: var(--ink);
+}
+
+.methodology-body p {
+  margin: 0 0 0.85rem;
+}
+
+.methodology-body p:last-child {
+  margin-bottom: 0;
 }
 
 footer {
@@ -133,4 +330,5 @@ footer {
 @media (max-width: 600px) {
   th, td { padding: 0.5rem; font-size: 0.85rem; }
   .page-header h1 { font-size: 1.5rem; }
+  .detail-stats dl { grid-template-columns: auto auto; }
 }
