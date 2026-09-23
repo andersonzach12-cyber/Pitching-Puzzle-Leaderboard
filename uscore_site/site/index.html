@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>uScore Leaderboard</title>
+  <meta name="description" content="Pitch-by-pitch uniqueness leaderboard for MLB pitchers." />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="page-header">
+    <h1>uScore Leaderboard</h1>
+    <p class="subtitle">How unique is every pitcher's arsenal, pitch by pitch.</p>
+    <p class="updated-at" id="updated-at">Loading...</p>
+  </header>
+
+  <main>
+    <div class="controls">
+      <input id="search" type="search" placeholder="Search pitcher..." aria-label="Search pitcher" />
+
+      <label for="metric-select">Rank by</label>
+      <select id="metric-select">
+        <option value="adjusted_uscore" selected>Adjusted uScore</option>
+        <option value="uscore">uScore</option>
+        <option value="delivery_quotient">Delivery Quotient</option>
+        <option value="adj_delivery_quotient">Adj. Delivery Quotient</option>
+      </select>
+
+      <label for="pitch-select">Pitch type</label>
+      <select id="pitch-select">
+        <option value="">Overall (all pitch types)</option>
+        <option value="FF">4-Seam Fastball</option>
+        <option value="SI">Sinker</option>
+        <option value="FC">Cutter</option>
+        <option value="CH">Changeup</option>
+        <option value="FS">Splitter</option>
+        <option value="FO">Forkball</option>
+        <option value="CU">Curveball</option>
+        <option value="KC">Knuckle Curve</option>
+        <option value="CS">Slow Curve</option>
+        <option value="SL">Slider</option>
+        <option value="ST">Sweeper</option>
+        <option value="SV">Slurve</option>
+      </select>
+    </div>
+
+    <div id="status" class="status" role="status"></div>
+
+    <table id="leaderboard">
+      <thead id="leaderboard-head"></thead>
+      <tbody id="leaderboard-body"></tbody>
+    </table>
+  </main>
+
+  <footer>
+    <p>Data refreshes daily from Baseball Savant. uScore measures how far each pitch, and each delivery, deviates from league norms.</p>
+  </footer>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+  <script src="config.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
