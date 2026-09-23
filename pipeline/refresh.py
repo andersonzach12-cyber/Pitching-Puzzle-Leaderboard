@@ -102,6 +102,29 @@ DELIVERY_WEIGHT_IN_USCORE = 0.3
 # 1. Pull pitch-arsenal data (Velo / IVB / Horizontal break / Spin / Usage)
 # --------------------------------------------------------------------------
 
+# Every id column Savant has used across its various leaderboard CSV
+# exports, in priority order -- the first one found in a given export is
+# treated as that pitcher's id.
+PLAYER_ID_ALIASES = ["player_id", "pitcher_id", "pitcher", "mlbam_id", "mlb_id"]
+
+
+def normalize_player_id(df: pd.DataFrame, source_label: str) -> pd.DataFrame:
+    """Rename whichever id column is present to 'player_id' and force it to
+    a consistent integer type, so merges across the three data sources never
+    fail with a dtype or column-name mismatch even if Savant's export uses a
+    different id column name than we expect."""
+    if "player_id" not in df.columns:
+        found = next((c for c in PLAYER_ID_ALIASES if c in df.columns), None)
+        if found is None:
+            raise RuntimeError(
+                f"{source_label}: couldn't find a player-id column among "
+                f"{PLAYER_ID_ALIASES} -- actual columns were {list(df.columns)}"
+            )
+        df = df.rename(columns={found: "player_id"})
+    df["player_id"] = pd.to_numeric(df["player_id"], errors="coerce").astype("Int64")
+    return df
+
+
 def fetch_pitch_arsenal(pitch_type: str) -> pd.DataFrame:
     """One row per pitcher for a single pitch type, straight from Savant's
     pitch-arsenal-stats leaderboard CSV export."""
@@ -114,6 +137,8 @@ def fetch_pitch_arsenal(pitch_type: str) -> pd.DataFrame:
     df = pd.read_csv(StringIO(resp.text))
     if df.empty:
         return df
+    print(f"pitch-arsenal-stats ({pitch_type}) columns:", list(df.columns))
+    df = normalize_player_id(df, f"pitch-arsenal-stats ({pitch_type})")
     df["pitch_type"] = pitch_type
     return df
 
@@ -143,6 +168,7 @@ def fetch_active_spin() -> pd.DataFrame:
     resp = requests.get(url, headers=HEADERS, timeout=30)
     resp.raise_for_status()
     raw = pd.read_csv(StringIO(resp.text))
+    print("active-spin columns:", list(raw.columns))
 
     # Savant's active-spin export is wide (one column per pitch type, e.g.
     # "active_spin_fourseam", "active_spin_sinker", ...). Melt it to long
@@ -160,8 +186,13 @@ def fetch_active_spin() -> pd.DataFrame:
         "sweeper": "ST", "st": "ST",
         "slurve": "SV", "sv": "SV",
     }
+    id_col = next((c for c in PLAYER_ID_ALIASES if c in raw.columns), None)
+    if id_col is None:
+        raise RuntimeError(
+            f"active-spin: couldn't find a player-id column among {PLAYER_ID_ALIASES} "
+            f"-- actual columns were {list(raw.columns)}"
+        )
     long_rows = []
-    id_col = "player_id" if "player_id" in raw.columns else raw.columns[0]
     for col in spin_cols:
         key = col.lower().replace("active_spin", "").replace("_", "")
         pt = col_to_type.get(key)
@@ -171,7 +202,13 @@ def fetch_active_spin() -> pd.DataFrame:
             val = row[col]
             if pd.notna(val):
                 long_rows.append({"player_id": row[id_col], "pitch_type": pt, "active_spin_pct": val})
-    return pd.DataFrame(long_rows)
+    if not long_rows:
+        print("WARNING: active-spin export matched none of the expected pitch-type "
+              "column names -- active-spin quotients will be 0 for everyone this run. "
+              f"Raw columns were: {list(raw.columns)}")
+        return pd.DataFrame(columns=["player_id", "pitch_type", "active_spin_pct"])
+    result = pd.DataFrame(long_rows)
+    return normalize_player_id(result, "active-spin")
 
 
 # --------------------------------------------------------------------------
@@ -187,32 +224,45 @@ def fetch_delivery_metrics() -> pd.DataFrame:
     resp.raise_for_status()
     raw = pd.read_csv(StringIO(resp.text))
 
+    # Column names Savant has used for this leaderboard's CSV export. If a
+    # future export renames a field, this print makes the mismatch obvious
+    # in the Actions log instead of silently writing all-null columns.
     print("pitcher-arm-angles columns:", list(raw.columns))
 
-    id_rename = {
-        "pitcher_id": "player_id",
-        "player_id": "player_id",
+    name_rename = {
         "last_name, first_name": "pitcher_name",
         "pitcher_name": "pitcher_name",
         "name": "pitcher_name",
     }
+    # Confirmed live (2026 season) column names from this leaderboard's CSV
+    # export: 'ball_angle' (arm angle), 'release_ball_z' (release height),
+    # 'relative_release_ball_x' (horizontal release point). This leaderboard
+    # does NOT publish release extension at all -- extension_ft is left
+    # blank here; the delivery-quotient math below treats an all-blank
+    # column as contributing 0 (see zscore()), so this only means the
+    # delivery quotient is currently based on 3 metrics instead of 4, not
+    # that anything breaks. If you'd like extension added back in, tell me
+    # and I'll wire up a second Savant source for it.
     metric_rename = {
         "release_extension": "extension_ft",
         "avg_release_extension": "extension_ft",
         "extension": "extension_ft",
         "ball_angle": "arm_angle_deg",
         "arm_angle": "arm_angle_deg",
+        "release_ball_z": "release_height_ft",
         "release_pos_z": "release_height_ft",
+        "relative_release_ball_x": "horizontal_release_ft",
         "release_pos_x": "horizontal_release_ft",
     }
-    rename = {**id_rename, **metric_rename}
+    rename = {**name_rename, **metric_rename}
     df = raw.rename(columns={c: rename[c] for c in raw.columns if c in rename})
+    df = normalize_player_id(df, "pitcher-arm-angles")
 
     keep = ["player_id", "pitcher_name", "extension_ft", "arm_angle_deg",
             "release_height_ft", "horizontal_release_ft"]
     missing = [c for c in keep if c not in df.columns]
     if missing:
-        print(f"WARNING: pitcher-arm-angles export is missing expected columns {missing} "
+        print(f"NOTE: pitcher-arm-angles export doesn't include {missing} "
               f"-- those fields will be blank this run. Raw columns were: {list(raw.columns)}")
     for col in keep:
         if col not in df.columns:
@@ -372,6 +422,12 @@ def run():
 
         pitchers = pitchers.dropna(subset=["player_id"])
         pitch_metrics = pitch_metrics.dropna(subset=["player_id"])
+
+        # Force player_id to plain Python ints (pandas' nullable Int64 dtype
+        # otherwise leaves numpy.int64 values, which some JSON encoders in
+        # the Supabase write path below don't know how to serialize).
+        pitchers["player_id"] = pitchers["player_id"].map(int)
+        pitch_metrics["player_id"] = pitch_metrics["player_id"].map(int)
 
         pitchers_rows = pitchers.where(pd.notnull(pitchers), None).to_dict(orient="records")
         pitch_rows = pitch_metrics.where(pd.notnull(pitch_metrics), None).to_dict(orient="records")
