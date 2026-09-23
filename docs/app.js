@@ -202,7 +202,7 @@ function buildMovementChartSvg(cloud, highlightPlayerId, pitchType) {
     <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Movement profile scatter plot">
       <line x1="${pad}" y1="${height - pad}" x2="${width - pad}" y2="${height - pad}" stroke="#e3e3e3" />
       <line x1="${pad}" y1="${pad}" x2="${pad}" y2="${height - pad}" stroke="#e3e3e3" />
-      <text x="${width / 2}" y="${height - 6}" text-anchor="middle" font-size="9" fill="#6b6b6b">Horizontal break (in)</text>
+      <text x="${width / 2}" y="${height - 6}" text-anchor="middle" font-size="9" fill="#6b6b6b">Horizontal break (in, arm-side +)</text>
       <text x="10" y="${height / 2}" text-anchor="middle" font-size="9" fill="#6b6b6b" transform="rotate(-90 10 ${height / 2})">Induced vertical break (in)</text>
       ${dots}
     </svg>
@@ -218,7 +218,7 @@ function buildDetailPanel(row, cloud, pitchType) {
         <dl>
           <dt>Velocity</dt><dd>${formatStat(row.velo, 1, " mph")}</dd>
           <dt>Induced vertical break</dt><dd>${formatStat(row.ivb_in, 1, " in")}</dd>
-          <dt>Horizontal break</dt><dd>${formatStat(row.horizontal_in, 1, " in")}</dd>
+          <dt>Horizontal break</dt><dd title="Positive = breaks toward the pitcher's arm side; negative = glove side. Normalized so lefties and righties are directly comparable.">${formatStat(row.horizontal_in, 1, " in")}</dd>
           <dt>Spin rate</dt><dd>${formatStat(row.spin_rpm, 0, " rpm")}</dd>
           <dt>Active spin</dt><dd>${row.active_spin_pct == null ? "n/a" : formatStat(row.active_spin_pct, 1, "%")}</dd>
           <dt>Usage</dt><dd>${formatPercent(row.usage_rate)}</dd>
@@ -310,7 +310,7 @@ function renderLeagueStrip() {
     <span class="league-strip-title">League avg ${escapeHtml(PITCH_LABELS[state.pitchType] || state.pitchType)}:</span>
     <span class="stat"><span class="stat-label">Velo</span><span class="stat-value">${formatStat(avgVelo, 1, " mph")}</span></span>
     <span class="stat"><span class="stat-label">IVB</span><span class="stat-value">${formatStat(avgIvb, 1, " in")}</span></span>
-    <span class="stat"><span class="stat-label">Horiz</span><span class="stat-value">${formatStat(avgHoriz, 1, " in")}</span></span>
+    <span class="stat"><span class="stat-label" title="Positive = arm-side, negative = glove-side">Horiz</span><span class="stat-value">${formatStat(avgHoriz, 1, " in")}</span></span>
     <span class="stat"><span class="stat-label">Spin</span><span class="stat-value">${formatStat(avgSpin, 0, " rpm")}</span></span>
     <span class="stat"><span class="stat-label">Pitchers</span><span class="stat-value">${state.rows.length}</span></span>
   `;
