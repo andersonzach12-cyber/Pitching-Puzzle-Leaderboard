@@ -9,6 +9,6 @@
 //                         that one is secret and must never appear here)
 
 window.USCORE_CONFIG = {
-  SUPABASE_URL: "https://YOUR-PROJECT-REF.supabase.co",
-  SUPABASE_ANON_KEY: "YOUR-ANON-PUBLIC-KEY",
+  SUPABASE_URL: "https://itvyonfcnkczetybgvdf.supabase.co/rest/v1/",
+  SUPABASE_ANON_KEY: "sb_publishable_V9o2ce9-opxYFrMFyULsVA_okoj36ra",
 };
