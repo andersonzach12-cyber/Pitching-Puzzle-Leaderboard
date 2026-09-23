@@ -198,7 +198,9 @@ def get_with_retries(url: str, params: dict | None = None, timeout: int = 60) ->
 def _fetch_pitch_events_chunk(start: str, end: str) -> pd.DataFrame:
     params = {
         "all": "true",
-        "hfGT": "R|PO|S|",  # regular season, postseason, spring training
+        "hfGT": "R|PO|",  # regular season + postseason only -- spring training rosters are full of
+                          # non-roster minor-league invitees facing MLB hitters, which was mixing
+                          # minor leaguers into the leaderboard alongside real MLB pitchers
         "hfSea": f"{SEASON}|",
         "player_type": "pitcher",
         "game_date_gt": start,
@@ -231,10 +233,11 @@ def fetch_pitch_events() -> pd.DataFrame:
     the season in small date windows and concatenates them, so the league
     z-scores downstream are calculated against the real, full-season data.
     """
-    # Spring training usually starts mid-to-late February; starting the pull
-    # there instead of Jan 1 skips several weeks of guaranteed-empty windows
-    # (and requests) with no games at all.
-    season_start = datetime(SEASON, 2, 1)
+    # hfGT above excludes spring training, and the regular season doesn't
+    # start until late March, so starting the pull at Mar 15 skips several
+    # weeks of guaranteed-empty windows (and requests) with no qualifying
+    # games at all.
+    season_start = datetime(SEASON, 3, 15)
     season_end = datetime.now()
 
     chunks = []
