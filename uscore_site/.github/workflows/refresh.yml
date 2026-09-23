@@ -1,0 +1,29 @@
+name: Daily uScore refresh
+
+on:
+  schedule:
+    # Runs at 09:00 UTC every day (about 4-5am US Eastern, after Savant's
+    # overnight data processing has caught up). Cron time is always UTC.
+    - cron: "0 9 * * *"
+  workflow_dispatch: {}   # lets you click "Run workflow" in GitHub to trigger it manually
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r pipeline/requirements.txt
+
+      - name: Run refresh
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: python pipeline/refresh.py
