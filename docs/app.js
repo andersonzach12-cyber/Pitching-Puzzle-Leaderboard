@@ -146,6 +146,12 @@ function escapeHtml(s) {
   return div.innerHTML;
 }
 
+function mean(values) {
+  const nums = values.filter((v) => v !== null && v !== undefined && !Number.isNaN(v));
+  if (!nums.length) return null;
+  return nums.reduce((sum, v) => sum + v, 0) / nums.length;
+}
+
 // Quick-scan color tier for a quotient value, relative to the rest of the
 // currently loaded set (so it adapts per pitch type rather than using one
 // fixed global scale).
@@ -286,6 +292,31 @@ function toggleLeaderboardDetail(playerId) {
   renderLeaderboard();
 }
 
+// A quick reference strip so a raw number like "88.7 mph" has something to
+// be compared against without clicking into any individual row -- built
+// from whatever's already loaded for the current pitch type, no extra query.
+function renderLeagueStrip() {
+  const el = document.getElementById("league-strip");
+  if (!state.rows.length) {
+    el.hidden = true;
+    return;
+  }
+  const avgVelo = mean(state.rows.map((r) => r.velo));
+  const avgIvb = mean(state.rows.map((r) => r.ivb_in));
+  const avgHoriz = mean(state.rows.map((r) => r.horizontal_in));
+  const avgSpin = mean(state.rows.map((r) => r.spin_rpm));
+
+  el.innerHTML = `
+    <span class="league-strip-title">League avg ${escapeHtml(PITCH_LABELS[state.pitchType] || state.pitchType)}:</span>
+    <span class="stat"><span class="stat-label">Velo</span><span class="stat-value">${formatStat(avgVelo, 1, " mph")}</span></span>
+    <span class="stat"><span class="stat-label">IVB</span><span class="stat-value">${formatStat(avgIvb, 1, " in")}</span></span>
+    <span class="stat"><span class="stat-label">Horiz</span><span class="stat-value">${formatStat(avgHoriz, 1, " in")}</span></span>
+    <span class="stat"><span class="stat-label">Spin</span><span class="stat-value">${formatStat(avgSpin, 0, " rpm")}</span></span>
+    <span class="stat"><span class="stat-label">Pitchers</span><span class="stat-value">${state.rows.length}</span></span>
+  `;
+  el.hidden = false;
+}
+
 async function loadLeaderboard() {
   document.getElementById("player-header").hidden = true;
   document.getElementById("status").textContent = "Loading...";
@@ -293,6 +324,7 @@ async function loadLeaderboard() {
     state.rows = await fetchCloud(state.pitchType);
     state.expandedKey = null;
     renderLeaderboard();
+    renderLeagueStrip();
     document.getElementById("status").textContent = "";
   } catch (err) {
     console.error(err);
@@ -308,6 +340,7 @@ async function loadLeaderboard() {
 function renderPlayerView() {
   document.getElementById("player-header").hidden = false;
   document.getElementById("player-name").textContent = state.playerName;
+  document.getElementById("league-strip").hidden = true;
 
   const head = document.getElementById("leaderboard-head");
   const body = document.getElementById("leaderboard-body");
@@ -403,6 +436,7 @@ function backToLeaderboard() {
   state.expandedKey = null;
   document.getElementById("search").value = "";
   renderLeaderboard();
+  renderLeagueStrip();
 }
 
 // --------------------------------------------------------------------------
