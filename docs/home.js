@@ -90,6 +90,98 @@ function renderMoverBox(title, rows, deltaClass) {
 }
 
 // --------------------------------------------------------------------------
+// "Pitchers to watch today" -- today's probable starters, ranked by each
+// starter's single best pitch (highest quotient in their arsenal). Two
+// queries rather than an embedded join: probable_starters -> pitchers for
+// names, then a separate pitch_metrics lookup for the starters' full
+// arsenals, reduced client-side to each pitcher's best pitch. Simpler than
+// a single embedded query and keeps each query's shape obvious.
+// --------------------------------------------------------------------------
+
+const WATCH_TOP_N = 5;
+
+function todayDateString() {
+  // Local calendar date (not UTC) -- "today" should match the games the
+  // person actually sees on their own clock, not a date that could roll
+  // over hours early/late depending on server-vs-viewer timezone.
+  const d = new Date();
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+function formatGameTime(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+}
+
+async function fetchWatchList() {
+  const { data: starters, error: startersError } = await client
+    .from("probable_starters")
+    .select("player_id, team, opponent, game_time, pitchers(pitcher_name)")
+    .eq("game_date", todayDateString());
+  if (startersError) throw startersError;
+  if (!starters || !starters.length) return [];
+
+  const ids = starters.map((s) => s.player_id);
+  const { data: pitches, error: pitchesError } = await client
+    .from("pitch_metrics")
+    .select("player_id, pitch_type, quotient")
+    .in("player_id", ids);
+  if (pitchesError) throw pitchesError;
+
+  const bestByPlayer = {};
+  (pitches || []).forEach((p) => {
+    const cur = bestByPlayer[p.player_id];
+    if (p.quotient != null && (!cur || p.quotient > cur.quotient)) bestByPlayer[p.player_id] = p;
+  });
+
+  const combined = starters
+    .map((s) => {
+      const best = bestByPlayer[s.player_id];
+      if (!best) return null; // no qualifying pitch data to rank this starter by
+      return {
+        pitcher_name: s.pitchers ? s.pitchers.pitcher_name : "(unknown)",
+        team: s.team,
+        opponent: s.opponent,
+        game_time: s.game_time,
+        pitch_type: best.pitch_type,
+        quotient: best.quotient,
+      };
+    })
+    .filter(Boolean);
+
+  return combined.sort((a, b) => b.quotient - a.quotient).slice(0, WATCH_TOP_N);
+}
+
+function renderWatchBox(rows) {
+  const items = rows.map((r) => {
+    const matchup = r.team && r.opponent ? `${escapeHtml(r.team)} vs ${escapeHtml(r.opponent)}` : "";
+    const time = formatGameTime(r.game_time);
+    const meta = [matchup, time].filter(Boolean).join(" &middot; ");
+    return `
+      <li>
+        <div class="watch-main">
+          <span class="watch-name">${escapeHtml(r.pitcher_name || "")}</span>
+          <span class="watch-pitch">${escapeHtml(PITCH_LABELS[r.pitch_type] || r.pitch_type)} (${formatValue(r.quotient)})</span>
+        </div>
+        ${meta ? `<div class="watch-meta">${meta}</div>` : ""}
+      </li>
+    `;
+  }).join("");
+
+  return `
+    <div class="mover-box watch-box">
+      <h3>Pitchers to Watch Today</h3>
+      <ol class="watch-list">${items || "<li class=\"home-empty\">No probable starters found for today yet</li>"}</ol>
+    </div>
+  `;
+}
+
+// --------------------------------------------------------------------------
 // Top-right pitcher search -- a lightweight autocomplete that hands off to
 // the full leaderboard page's player view rather than duplicating it here.
 // --------------------------------------------------------------------------
@@ -188,17 +280,22 @@ async function loadHome() {
   const moversRow = document.getElementById("movers-row");
   status.textContent = "Loading...";
   try {
-    const [pitchResults, movers] = await Promise.all([
+    const [pitchResults, movers, watchList] = await Promise.all([
       Promise.all(HOME_PITCH_TYPES.map((pt) => fetchTopN(pt).then((rows) => ({ pt, rows })))),
       fetchMovers().catch((err) => {
         console.error(err);
         return { gainers: [], decliners: [] };
       }),
+      fetchWatchList().catch((err) => {
+        console.error(err);
+        return [];
+      }),
     ]);
     grid.innerHTML = pitchResults.map(({ pt, rows }) => renderCard(pt, rows)).join("");
     moversRow.innerHTML =
       renderMoverBox("Yesterday's Biggest Gainers", movers.gainers, "mover-up") +
-      renderMoverBox("Yesterday's Biggest Decliners", movers.decliners, "mover-down");
+      renderMoverBox("Yesterday's Biggest Decliners", movers.decliners, "mover-down") +
+      renderWatchBox(watchList);
     status.textContent = "";
   } catch (err) {
     console.error(err);
