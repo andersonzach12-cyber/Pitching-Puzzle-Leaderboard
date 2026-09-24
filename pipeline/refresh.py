@@ -135,15 +135,25 @@ USAGE_RATE_EXPONENT = 0.75
 # exceptional depth (e.g. Drew Rasmussen's, which drops far more than a
 # typical cutter and grades as his best pitch by results) just as easily as
 # from exceptional ride).
-#   - Changeups, curveballs, and knuckle curves are valued specifically for
-#     dropping MORE than average (real deception/tunneling off the
-#     fastball) -- "signed_neg", so more drop is rewarded, not penalized.
-#   - Sliders, sweepers, slurves, and cutters get real value from either
-#     kind of unusual tilt -- "abs".
+#   - Changeups, curveballs, knuckle curves, and splitters are valued
+#     specifically for dropping MORE than average (real deception/tunneling
+#     off the fastball) -- "signed_neg", so more drop is rewarded, not
+#     penalized. (Confirmed on real splitter examples: Gausman's -- one of
+#     the most respected splitters in the game -- and Sasaki's were both
+#     landing at/below league average under the old signed treatment, which
+#     rewarded LESS drop on a pitch whose whole purpose is heavy, late
+#     plunge.)
+#   - Sliders, sweepers, slurves, cutters, and sinkers get real value from
+#     either kind of unusual tilt -- "abs". A sinker's defining trait is
+#     heavy sink (confirmed on Logan Webb, whose near-zero IVB -- elite,
+#     maximal sink -- was ranking him near dead last under the old signed
+#     treatment), but an unusually high-riding sinker/two-seam hybrid can
+#     also be a real, distinct weapon, so both extremes are rewarded rather
+#     than only one.
 # Defaults to "signed" for any pitch type not listed here.
 IVB_SHAPE = {
-    "SL": "abs", "ST": "abs", "SV": "abs", "FC": "abs",
-    "CH": "signed_neg", "CU": "signed_neg", "KC": "signed_neg",
+    "SL": "abs", "ST": "abs", "SV": "abs", "FC": "abs", "SI": "abs",
+    "CH": "signed_neg", "CU": "signed_neg", "KC": "signed_neg", "FS": "signed_neg",
 }
 
 # Whether velocity should reward being faster ("signed", the default),
