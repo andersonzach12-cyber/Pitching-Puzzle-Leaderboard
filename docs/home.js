@@ -43,6 +43,52 @@ async function fetchTopN(pitchType) {
   }));
 }
 
+function formatDelta(v) {
+  if (v === null || v === undefined || Number.isNaN(v)) return "-";
+  const sign = v > 0 ? "+" : "";
+  return sign + Number(v).toFixed(3);
+}
+
+// Every pitch-type row that has a prev_quotient (i.e. has been through at
+// least two refreshes), with the day-over-day delta computed client-side --
+// simplest way to sort/slice into gainers vs. decliners without needing a
+// generated column or a second round-trip per pitch type.
+async function fetchMovers() {
+  const { data, error } = await client
+    .from("pitch_metrics")
+    .select("pitch_type, quotient, prev_quotient, pitchers(pitcher_name)")
+    .not("prev_quotient", "is", null)
+    .limit(5000);
+  if (error) throw error;
+  const withDelta = data
+    .map((r) => ({
+      pitcher_name: r.pitchers ? r.pitchers.pitcher_name : "(unknown)",
+      pitch_type: r.pitch_type,
+      delta: r.quotient - r.prev_quotient,
+    }))
+    .filter((r) => !Number.isNaN(r.delta));
+  const gainers = [...withDelta].sort((a, b) => b.delta - a.delta).slice(0, 5);
+  const decliners = [...withDelta].sort((a, b) => a.delta - b.delta).slice(0, 5);
+  return { gainers, decliners };
+}
+
+function renderMoverBox(title, rows, deltaClass) {
+  const items = rows.map((r) => `
+    <li>
+      <span class="mover-name">${escapeHtml(r.pitcher_name || "")}</span>
+      <span class="mover-pitch">${escapeHtml(PITCH_LABELS[r.pitch_type] || r.pitch_type)}</span>
+      <span class="mover-delta ${deltaClass}">${formatDelta(r.delta)}</span>
+    </li>
+  `).join("");
+
+  return `
+    <div class="mover-box">
+      <h3>${escapeHtml(title)}</h3>
+      <ol class="mover-list">${items || "<li class=\"home-empty\">No data yet &mdash; check back after the next refresh</li>"}</ol>
+    </div>
+  `;
+}
+
 async function fetchLastUpdated() {
   const { data, error } = await client
     .from("refresh_log")
@@ -75,12 +121,20 @@ function renderCard(pitchType, rows) {
 async function loadHome() {
   const grid = document.getElementById("pitch-grid");
   const status = document.getElementById("status");
+  const moversRow = document.getElementById("movers-row");
   status.textContent = "Loading...";
   try {
-    const results = await Promise.all(
-      HOME_PITCH_TYPES.map((pt) => fetchTopN(pt).then((rows) => ({ pt, rows })))
-    );
-    grid.innerHTML = results.map(({ pt, rows }) => renderCard(pt, rows)).join("");
+    const [pitchResults, movers] = await Promise.all([
+      Promise.all(HOME_PITCH_TYPES.map((pt) => fetchTopN(pt).then((rows) => ({ pt, rows })))),
+      fetchMovers().catch((err) => {
+        console.error(err);
+        return { gainers: [], decliners: [] };
+      }),
+    ]);
+    grid.innerHTML = pitchResults.map(({ pt, rows }) => renderCard(pt, rows)).join("");
+    moversRow.innerHTML =
+      renderMoverBox("Biggest Gainers", movers.gainers, "mover-up") +
+      renderMoverBox("Biggest Decliners", movers.decliners, "mover-down");
     status.textContent = "";
   } catch (err) {
     console.error(err);
