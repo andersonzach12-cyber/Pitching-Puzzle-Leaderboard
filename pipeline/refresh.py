@@ -896,6 +896,28 @@ def run():
         pitchers["player_id"] = pitchers["player_id"].map(int)
         pitch_metrics["player_id"] = pitch_metrics["player_id"].map(int)
 
+        # Capture each (player_id, pitch_type)'s quotient as it stands RIGHT
+        # NOW, before this run's upsert overwrites it -- this becomes
+        # "yesterday's" value for the home page's day-over-day movers boxes.
+        # Has to happen after the upserts above would be too late (the old
+        # value would already be gone), so this reads the table one last
+        # time before writing anything.
+        existing_quotients = supabase.table("pitch_metrics").select(
+            "player_id, pitch_type, quotient"
+        ).eq("season", SEASON).execute().data
+        prev_map = {
+            (row["player_id"], row["pitch_type"]): row["quotient"]
+            for row in existing_quotients if row["quotient"] is not None
+        }
+        prev_captured_at = datetime.now(timezone.utc).isoformat()
+        pitch_metrics["prev_quotient"] = [
+            prev_map.get((pid, pt)) for pid, pt in zip(pitch_metrics["player_id"], pitch_metrics["pitch_type"])
+        ]
+        pitch_metrics["prev_captured_at"] = [
+            prev_captured_at if (pid, pt) in prev_map else None
+            for pid, pt in zip(pitch_metrics["player_id"], pitch_metrics["pitch_type"])
+        ]
+
         # Strict JSON (which the Supabase write below requires) can't
         # represent NaN or +/-Infinity. A pandas-level replace() was tried
         # here first and didn't catch everything (still failed against a
