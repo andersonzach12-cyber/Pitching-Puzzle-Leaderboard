@@ -162,18 +162,22 @@ IVB_SHAPE = {
 # knuckle curves don't have one "better" speed -- a firm, hard curve (more
 # like Glasnow's) and a slow, loopy one (more like Valdez's, with a huge gap
 # off his fastball) can both be elite for different reasons, so "abs"
-# rewards either extreme. Defaults to "signed" for any pitch type not
+# rewards either extreme. Splitters work the same way -- confirmed on real
+# examples: Duran's splitter is a weapon largely BECAUSE it's thrown at
+# near-fastball velocity (97+ mph), while Gausman's and Imanaga's are
+# weapons despite (or because of) being notably slow -- so, like a
+# slider/curve, there's no single "better" speed, just distance from
+# average in either direction. Defaults to "signed" for any pitch type not
 # listed here.
 #
-# Changeups are handled separately from this dict (see CH_VELO_GAP_WEIGHT /
-# CH_RAW_VELO_WEIGHT below) rather than through a simple shape override --
-# real changeup analysis was empirically confirmed to be different for
-# changeups: what makes one deceptive is largely its velocity SEPARATION
-# from the pitcher's OWN fastball, not just being slow in some absolute,
-# cross-pitcher sense. Comparing a changeup's velocity only to the league's
-# changeup average (as every other pitch type does) can't capture that.
+# Changeups are the one exception, handled separately from this dict (see
+# CH_VELO_GAP_WEIGHT / CH_RAW_VELO_WEIGHT below) rather than through a
+# simple shape override -- real changeup analysis was empirically confirmed
+# to be different: what makes a changeup deceptive is largely its velocity
+# SEPARATION from the pitcher's OWN fastball, not just being fast or slow in
+# some absolute, cross-pitcher sense the way curves/sliders/splitters are.
 VELO_SHAPE = {
-    "CU": "abs", "KC": "abs",
+    "CU": "abs", "KC": "abs", "FS": "abs",
 }
 
 # Changeup velocity is scored as a blend of two things, rather than a single
