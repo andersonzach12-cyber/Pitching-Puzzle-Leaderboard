@@ -1030,6 +1030,40 @@ def run():
             print(f"Removed {len(stale_ids)} pitchers no longer in this run's data "
                   f"(e.g. previously-included spring-training-only players).")
 
+        # The cleanup above only catches a pitcher who no longer qualifies at
+        # ALL this season (their whole "pitchers" row disappears, which is
+        # what actually triggers the "on delete cascade" and clears their
+        # pitch_metrics rows too). It does NOT catch the more common case: a
+        # pitcher who still qualifies overall (their pitchers row survives,
+        # so no cascade ever fires) but who no longer meets MIN_PITCHES for
+        # ONE SPECIFIC pitch type they used to throw enough of -- they've
+        # simply thrown fewer of it lately, changed their mix, etc. That
+        # (player_id, pitch_type) row would otherwise sit in pitch_metrics
+        # forever with whatever it last computed, including columns added
+        # AFTER that row's last real update (e.g. display_score coming back
+        # null on an old row that predates the column, sorting to the top of
+        # every leaderboard as a mystery blank -- exactly what this fixes).
+        # Same idea as the cleanup above, just scoped to the finer
+        # (player_id, pitch_type) grain pitch_metrics actually keys on.
+        current_pitch_keys = {(r["player_id"], r["pitch_type"]) for r in pitch_rows}
+        existing_pitch_keys = supabase.table("pitch_metrics").select(
+            "player_id, pitch_type"
+        ).eq("season", SEASON).execute().data
+        stale_by_player: dict[int, list[str]] = {}
+        for row in existing_pitch_keys:
+            key = (row["player_id"], row["pitch_type"])
+            if key not in current_pitch_keys:
+                stale_by_player.setdefault(row["player_id"], []).append(row["pitch_type"])
+        for player_id, pitch_types in stale_by_player.items():
+            supabase.table("pitch_metrics").delete().eq("season", SEASON).eq(
+                "player_id", player_id
+            ).in_("pitch_type", pitch_types).execute()
+        if stale_by_player:
+            stale_pitch_row_count = sum(len(v) for v in stale_by_player.values())
+            print(f"Removed {stale_pitch_row_count} stale pitch_metrics rows across "
+                  f"{len(stale_by_player)} pitchers (individual pitch types they no "
+                  f"longer qualify for this run, even though the pitcher overall still does).")
+
         supabase.table("refresh_log").update({
             "status": "success",
             "finished_at": datetime.now(timezone.utc).isoformat(),
