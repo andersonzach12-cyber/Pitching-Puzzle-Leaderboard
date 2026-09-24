@@ -74,10 +74,15 @@ body {
   text-decoration: underline;
 }
 
+/* Two rows of five pitch-type cards. Fixed column count (rather than
+   auto-fill) is what actually produces "two rows of five" instead of
+   however many columns happen to fit -- it just gets narrower per card on
+   smaller screens until the breakpoints below drop the column count. */
 .pitch-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-  gap: 1rem;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 0.75rem;
+  margin-bottom: 1.75rem;
 }
 
 .pitch-card {
@@ -85,7 +90,7 @@ body {
   background: white;
   border: 1px solid var(--line);
   border-radius: 8px;
-  padding: 1rem 1.1rem 0.9rem;
+  padding: 0.75rem 0.85rem 0.65rem;
   text-decoration: none;
   color: var(--ink);
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
@@ -98,24 +103,24 @@ body {
 }
 
 .pitch-card h3 {
-  margin: 0 0 0.6rem;
-  font-size: 1.05rem;
+  margin: 0 0 0.45rem;
+  font-size: 0.92rem;
   color: var(--accent);
 }
 
 .home-list {
   list-style: none;
-  margin: 0 0 0.75rem;
+  margin: 0 0 0.5rem;
   padding: 0;
 }
 
 .home-list li {
   display: flex;
   align-items: baseline;
-  gap: 0.5rem;
-  padding: 0.25rem 0;
+  gap: 0.35rem;
+  padding: 0.18rem 0;
   border-bottom: 1px solid #f0f0ee;
-  font-size: 0.9rem;
+  font-size: 0.78rem;
 }
 
 .home-list li:last-child {
@@ -125,7 +130,7 @@ body {
 .home-rank {
   color: var(--muted);
   font-variant-numeric: tabular-nums;
-  width: 1.4em;
+  width: 1.1em;
   flex: 0 0 auto;
 }
 
@@ -153,15 +158,108 @@ body {
 
 .pitch-card-link {
   display: inline-block;
-  font-size: 0.82rem;
+  font-size: 0.74rem;
   font-weight: 600;
   color: var(--accent-strong);
+}
+
+/* Gainers / decliners boxes, centered as a pair above the pitch-type grid. */
+.movers-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(240px, 360px));
+  gap: 1rem;
+  justify-content: center;
+  margin: 0 auto 1.75rem;
+}
+
+.mover-box {
+  background: white;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0.9rem 1.1rem 0.8rem;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+}
+
+.mover-box h3 {
+  margin: 0 0 0.5rem;
+  font-size: 1rem;
+  color: var(--accent);
+}
+
+.mover-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.mover-list li {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  padding: 0.3rem 0;
+  border-bottom: 1px solid #f0f0ee;
+  font-size: 0.85rem;
+}
+
+.mover-list li:last-child {
+  border-bottom: none;
+}
+
+.mover-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mover-pitch {
+  color: var(--muted);
+  font-size: 0.76rem;
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.mover-delta {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  flex: 0 0 auto;
+}
+
+.mover-up {
+  color: var(--accent-strong);
+}
+
+.mover-down {
+  color: #b3261e;
 }
 
 main {
   max-width: 900px;
   margin: 0 auto;
   padding: 1.5rem;
+}
+
+/* The home page's grid/movers layout reads better a bit wider than the
+   leaderboard page's table-and-search layout, so it gets its own max-width
+   rather than changing the shared default above. */
+main.home-page {
+  max-width: 1100px;
+}
+
+@media (max-width: 860px) {
+  .pitch-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+@media (max-width: 600px) {
+  .pitch-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .movers-row {
+    grid-template-columns: 1fr;
+  }
 }
 
 .controls {
