@@ -506,12 +506,22 @@ document.getElementById("pitch-select").addEventListener("change", (e) => {
 
   // Support linking straight into a specific pitch type's leaderboard (e.g.
   // from the home page's top-pitchers cards): leaderboard.html?pitch=SL
-  const requestedPitch = new URLSearchParams(window.location.search).get("pitch");
+  const params = new URLSearchParams(window.location.search);
+  const requestedPitch = params.get("pitch");
   const pitchSelect = document.getElementById("pitch-select");
   if (requestedPitch && PITCH_LABELS[requestedPitch]) {
     state.pitchType = requestedPitch;
     pitchSelect.value = requestedPitch;
   }
 
-  loadLeaderboard();
+  // Support linking straight into a specific pitcher's arsenal view (e.g.
+  // from the home page's top-right search box):
+  // leaderboard.html?player_id=123&name=Jane+Doe
+  const requestedPlayerId = params.get("player_id");
+  const requestedName = params.get("name");
+  if (requestedPlayerId) {
+    selectPlayer(Number(requestedPlayerId), requestedName || "");
+  } else {
+    loadLeaderboard();
+  }
 })();
