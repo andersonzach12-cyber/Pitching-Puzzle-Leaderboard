@@ -74,9 +74,28 @@ create table if not exists refresh_log (
     error_message text
 );
 
+-- Today's probable starting pitchers, refreshed daily from MLB's own Stats
+-- API (a separate source from Baseball Savant) -- powers the home page's
+-- "pitchers to watch today" box. player_id references pitchers(player_id)
+-- because the refresh script only ever writes starters who already have
+-- qualifying uScore data this season (see fetch_probable_starters /
+-- run() in refresh.py) -- a starter with no tracked pitch data has nothing
+-- to rank by anyway, so there's no case where this FK should reject a row.
+create table if not exists probable_starters (
+    id            bigint generated always as identity primary key,
+    game_date     date not null,
+    player_id     bigint not null references pitchers(player_id) on delete cascade,
+    team          text,
+    opponent      text,
+    game_time     timestamptz,
+    fetched_at    timestamptz not null default now(),
+    unique (game_date, player_id)
+);
+
 create index if not exists idx_pitch_metrics_player on pitch_metrics(player_id, season);
 create index if not exists idx_pitch_metrics_type on pitch_metrics(pitch_type, season);
 create index if not exists idx_pitchers_season on pitchers(season);
+create index if not exists idx_probable_starters_date on probable_starters(game_date);
 
 -- Row Level Security: the public website uses Supabase's "anon" key, which
 -- must only ever be able to READ. All writes go through the refresh script,
@@ -84,12 +103,15 @@ create index if not exists idx_pitchers_season on pitchers(season);
 alter table pitchers enable row level security;
 alter table pitch_metrics enable row level security;
 alter table refresh_log enable row level security;
+alter table probable_starters enable row level security;
 
 create policy "public read pitchers" on pitchers
     for select using (true);
 create policy "public read pitch_metrics" on pitch_metrics
     for select using (true);
 create policy "public read refresh_log" on refresh_log
+    for select using (true);
+create policy "public read probable_starters" on probable_starters
     for select using (true);
 
 -- No insert/update/delete policies are created for the anon role, so the
