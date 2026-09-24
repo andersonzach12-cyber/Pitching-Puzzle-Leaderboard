@@ -31,6 +31,7 @@ const state = {
   rows: [],            // current leaderboard rows (extended with raw metrics)
   sortField: "value",   // "value" | "usage_rate"
   expandedKey: null,    // player_id (leaderboard) or pitch_type (player view) currently expanded
+  playerId: null,
   playerName: "",
   playerRows: [],       // player view: one row per pitch type they throw
   suggestions: [],
@@ -46,15 +47,15 @@ let searchDebounceTimer = null;
 async function fetchPitchTypeLeaderboard(pitchType) {
   const { data, error } = await client
     .from("pitch_metrics")
-    .select("player_id, quotient, usage_rate, velo, ivb_in, horizontal_in, spin_rpm, active_spin_pct, delivery_modifier, pitchers(pitcher_name)")
+    .select("player_id, display_score, usage_rate, velo, ivb_in, horizontal_in, spin_rpm, active_spin_pct, delivery_modifier, pitchers(pitcher_name)")
     .eq("pitch_type", pitchType)
-    .order("quotient", { ascending: false })
+    .order("display_score", { ascending: false })
     .limit(250);
   if (error) throw error;
   return data.map((r) => ({
     player_id: r.player_id,
     pitcher_name: r.pitchers ? r.pitchers.pitcher_name : "(unknown)",
-    value: r.quotient,
+    value: r.display_score,
     usage_rate: r.usage_rate,
     velo: r.velo,
     ivb_in: r.ivb_in,
@@ -98,7 +99,7 @@ async function getRank(pitchType, quotient) {
 async function fetchArsenal(playerId) {
   const { data, error } = await client
     .from("pitch_metrics")
-    .select("pitch_type, velo, ivb_in, horizontal_in, spin_rpm, active_spin_pct, delivery_modifier, usage_rate, quotient")
+    .select("pitch_type, velo, ivb_in, horizontal_in, spin_rpm, active_spin_pct, delivery_modifier, usage_rate, quotient, display_score")
     .eq("player_id", playerId)
     .order("quotient", { ascending: false });
   if (error) throw error;
@@ -125,9 +126,12 @@ async function fetchLastUpdated() {
 // Small formatters
 // --------------------------------------------------------------------------
 
-function formatValue(v) {
+// display_score is already rounded to a whole number server-side (100 =
+// league average for that pitch type, like Stuff+) -- this just guards
+// against it coming back as e.g. "103.0" and strips the decimal.
+function formatScore(v) {
   if (v === null || v === undefined || Number.isNaN(v)) return "-";
-  return Number(v).toFixed(3);
+  return String(Math.round(Number(v)));
 }
 
 function formatPercent(v) {
@@ -223,7 +227,7 @@ function buildDetailPanel(row, cloud, pitchType) {
           <dt>Active spin</dt><dd>${row.active_spin_pct == null ? "n/a" : formatStat(row.active_spin_pct, 1, "%")}</dd>
           <dt>Usage</dt><dd>${formatPercent(row.usage_rate)}</dd>
           <dt>Delivery modifier</dt><dd title="How unusual this pitcher's release point is league-wide -- 1.00 is a perfectly average delivery">${formatStat(row.delivery_modifier, 2, "&times;")}</dd>
-          <dt>Quotient</dt><dd>${formatValue(row.value != null ? row.value : row.quotient)}</dd>
+          <dt title="100 = league average for this pitch type; higher = more unique">uScore</dt><dd>${formatScore(row.value != null ? row.value : row.display_score)}</dd>
         </dl>
       </div>
       <div class="detail-chart">${chart}</div>
@@ -255,7 +259,7 @@ function renderLeaderboard() {
     <tr>
       <th>#</th>
       <th>Pitcher</th>
-      <th class="sortable" id="sort-quotient" title="How far this pitch's velocity, movement, spin, and active spin deviate from league average for this pitch type, weighted by how often it's thrown">Pitch Quotient${arrow("value")}</th>
+      <th class="sortable" id="sort-quotient" title="100 = league average for this pitch type. Reflects how far this pitch's velocity, movement, spin, and active spin deviate from average, weighted by how often it's thrown -- higher means more unique.">uScore${arrow("value")}</th>
       <th class="sortable" id="sort-usage" title="Share of this pitcher's tracked pitches this season that were this pitch type">Usage${arrow("usage_rate")}</th>
     </tr>
   `;
@@ -269,7 +273,7 @@ function renderLeaderboard() {
     tr.innerHTML = `
       <td class="rank">${i + 1}</td>
       <td>${escapeHtml(r.pitcher_name || "")}</td>
-      <td class="value ${tierClass(r.value, allValues)}">${formatValue(r.value)}</td>
+      <td class="value ${tierClass(r.value, allValues)}">${formatScore(r.value)}</td>
       <td class="value">${formatPercent(r.usage_rate)}</td>
     `;
     tr.addEventListener("click", () => toggleLeaderboardDetail(r.player_id));
@@ -347,7 +351,7 @@ function renderPlayerView() {
   head.innerHTML = `
     <tr>
       <th>Pitch</th>
-      <th title="How far this pitch's velocity, movement, spin, and active spin deviate from league average for this pitch type, weighted by how often it's thrown">Quotient</th>
+      <th title="100 = league average for this pitch type; higher = more unique">uScore</th>
       <th>Rank</th>
       <th title="Share of this pitcher's tracked pitches this season that were this pitch type">Usage</th>
     </tr>
@@ -359,7 +363,7 @@ function renderPlayerView() {
     tr.className = "data-row" + (state.expandedKey === r.pitch_type ? " expanded" : "");
     tr.innerHTML = `
       <td>${PITCH_LABELS[r.pitch_type] || r.pitch_type}</td>
-      <td class="value">${formatValue(r.quotient)}</td>
+      <td class="value">${formatScore(r.display_score)}</td>
       <td class="rank">#${r.rank} of ${r.total}</td>
       <td class="value">${formatPercent(r.usage_rate)}</td>
     `;
@@ -374,7 +378,7 @@ function renderPlayerView() {
       const cloud = state.chartCache[r.pitch_type];
       if (cloud) {
         td.innerHTML = buildDetailPanel(
-          { ...r, player_id: findPlayerIdInCloud(cloud, r), value: r.quotient },
+          { ...r, player_id: state.playerId, value: r.display_score },
           cloud,
           r.pitch_type
         );
@@ -385,16 +389,6 @@ function renderPlayerView() {
       body.appendChild(detailTr);
     }
   });
-}
-
-// The player's own row lives inside the cloud for that pitch type (same
-// underlying table), so we look it up by matching quotient rather than
-// carrying player_id through every query.
-function findPlayerIdInCloud(cloud, row) {
-  const match = cloud.find((c) =>
-    Math.abs(c.value - row.quotient) < 1e-9 && Math.abs((c.usage_rate || 0) - (row.usage_rate || 0)) < 1e-9
-  );
-  return match ? match.player_id : null;
 }
 
 async function togglePlayerDetail(pitchType) {
@@ -420,6 +414,7 @@ async function selectPlayer(playerId, pitcherName) {
   document.getElementById("status").textContent = "Loading...";
   try {
     state.playerRows = await fetchArsenal(playerId);
+    state.playerId = playerId;
     state.playerName = pitcherName;
     state.view = "player";
     state.expandedKey = null;
@@ -434,6 +429,7 @@ async function selectPlayer(playerId, pitcherName) {
 function backToLeaderboard() {
   state.view = "leaderboard";
   state.expandedKey = null;
+  state.playerId = null;
   state.playerName = "";
   state.playerRows = [];
   document.getElementById("search").value = "";
