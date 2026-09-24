@@ -9,6 +9,18 @@
 </head>
 <body>
   <header class="page-header">
+    <div class="home-search-wrap">
+      <label class="home-search-label" for="home-search">
+        <svg class="home-search-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false">
+          <circle cx="8.5" cy="8.5" r="6" fill="none" stroke="currentColor" stroke-width="1.6" />
+          <line x1="13" y1="13" x2="18" y2="18" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+        </svg>
+        <span class="home-search-text">Find a pitcher</span>
+      </label>
+      <input id="home-search" type="search" placeholder="Search a pitcher..." aria-label="Search a pitcher" autocomplete="off" />
+      <div id="home-suggestions" class="suggestions" hidden></div>
+    </div>
+
     <h1>uScore Leaderboard</h1>
     <p class="subtitle">Real-time ratings of pitch characteristics and their uniqueness relative to the rest of the league.</p>
     <p class="updated-at" id="updated-at">Loading...</p>
