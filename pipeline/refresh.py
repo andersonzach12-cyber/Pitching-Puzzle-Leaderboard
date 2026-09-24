@@ -791,12 +791,26 @@ def compute_pitch_quotients(pitch_metrics: pd.DataFrame, active_spin_fallback: p
         group["quotient"] = (
             ceiling * (group["usage_rate"] ** USAGE_RATE_EXPONENT) * group["delivery_modifier"]
         )
+        # display_score: the same information as quotient, just rescaled onto
+        # a "100 = league average for this pitch type" scale (like Stuff+/
+        # PitchingBot), so it reads intuitively instead of as a raw
+        # z-score-weighted composite whose range differs oddly by pitch type
+        # (cutters routinely topping 4+ while curveballs top out under 2,
+        # purely as an artifact of the weighting/usage math, not because
+        # cutters are "better"). This is a display-only transform -- a
+        # second z-score taken of quotient itself, within the same pitch-type
+        # group, mapped onto 100 +/- 10 per standard deviation and rounded to
+        # a whole number. It's monotonic with quotient, so ranking/sorting by
+        # either produces identical order; quotient itself is unchanged and
+        # still drives every actual computation (including this one).
+        group["display_score"] = (100 + 10 * zscore(group["quotient"])).round()
         out_frames.append(group)
 
     result = pd.concat(out_frames, ignore_index=True)
     return result[[
         "player_id", "pitch_type", "velo", "ivb_in", "horizontal_in", "spin_rpm",
-        "active_spin_pct", "usage_rate", "active_spin_quotient", "delivery_modifier", "quotient",
+        "active_spin_pct", "usage_rate", "active_spin_quotient", "delivery_modifier",
+        "quotient", "display_score",
     ]]
 
 
@@ -946,15 +960,22 @@ def run():
         # value would already be gone), so this reads the table one last
         # time before writing anything.
         existing_quotients = supabase.table("pitch_metrics").select(
-            "player_id, pitch_type, quotient"
+            "player_id, pitch_type, quotient, display_score"
         ).eq("season", SEASON).execute().data
         prev_map = {
             (row["player_id"], row["pitch_type"]): row["quotient"]
             for row in existing_quotients if row["quotient"] is not None
         }
+        prev_display_map = {
+            (row["player_id"], row["pitch_type"]): row["display_score"]
+            for row in existing_quotients if row["display_score"] is not None
+        }
         prev_captured_at = datetime.now(timezone.utc).isoformat()
         pitch_metrics["prev_quotient"] = [
             prev_map.get((pid, pt)) for pid, pt in zip(pitch_metrics["player_id"], pitch_metrics["pitch_type"])
+        ]
+        pitch_metrics["prev_display_score"] = [
+            prev_display_map.get((pid, pt)) for pid, pt in zip(pitch_metrics["player_id"], pitch_metrics["pitch_type"])
         ]
         pitch_metrics["prev_captured_at"] = [
             prev_captured_at if (pid, pt) in prev_map else None
