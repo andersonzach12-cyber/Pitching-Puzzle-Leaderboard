@@ -120,13 +120,40 @@ IVB_SHAPE = {
 }
 
 # Per-pitch-type override for how much horizontal break counts toward the
-# Ceiling formula, in place of the global HORIZ_WEIGHT. Sliders and sweepers
-# get real, distinct value from horizontal movement specifically -- a
-# pitcher's slider can be a weapon because of exceptional sweep even with
-# unremarkable depth, which the default fastball-tuned weighting (where
-# vertical movement dominates) badly undersells.
+# Ceiling formula, in place of the global HORIZ_WEIGHT. Sliders, sweepers,
+# and slurves get real, distinct value from horizontal movement
+# specifically -- a pitcher's slider can be a weapon because of exceptional
+# sweep even with unremarkable depth, which the default fastball-tuned
+# weighting (where vertical movement dominates) badly undersells.
 HORIZ_WEIGHT_OVERRIDE = {
-    "SL": 0.65, "ST": 0.65,
+    "SL": 0.65, "ST": 0.65, "SV": 0.5,
+}
+
+# Whether horizontal break should reward a specific direction ("signed" --
+# arm-side movement rewarded, the default), the opposite direction
+# ("signed_neg" -- glove-side movement rewarded), or distance from league
+# average in EITHER direction ("abs"). This has to match each pitch type's
+# own defining/characteristic movement under the handedness-normalized
+# convention above (positive = arm-side, negative = glove-side for
+# everyone, regardless of throwing hand):
+#   - Sinkers, changeups, splitters, and forkballs are defined by arm-side
+#     run/fade -- "signed" (the default) is correct as-is.
+#   - Cutters, curveballs (all three variants), sliders, sweepers, and
+#     slurves are defined by glove-side break -- "signed_neg", so more
+#     glove-side movement is rewarded rather than penalized. (Sliders and
+#     sweepers were the first ones caught and fixed; curves, cutters, and
+#     slurves had the exact same backwards-direction bug at the smaller
+#     default weight, just less visibly.)
+#   - Four-seam fastballs have no single "better" direction -- a classic
+#     arm-side-running four-seamer and a cut-riding four-seamer (like
+#     Justin Steele's) can both be plus pitches -- so "abs" rewards
+#     distance from average in either direction rather than picking a side.
+# Defaults to "signed" for any pitch type not listed here.
+HORIZ_SHAPE = {
+    "FF": "abs",
+    "FC": "signed_neg",
+    "CU": "signed_neg", "KC": "signed_neg", "CS": "signed_neg",
+    "SL": "signed_neg", "ST": "signed_neg", "SV": "signed_neg",
 }
 
 # Every id column Savant has used across its various CSV exports, in
@@ -589,6 +616,10 @@ def compute_pitch_quotients(pitch_metrics: pd.DataFrame, active_spin_fallback: p
         if IVB_SHAPE.get(pt) == "abs":
             ivb_z = ivb_z.abs()
         horiz_z = zscore(group["horizontal_in"])
+        if HORIZ_SHAPE.get(pt) == "abs":
+            horiz_z = horiz_z.abs()
+        elif HORIZ_SHAPE.get(pt) == "signed_neg":
+            horiz_z = -horiz_z
         spin_z = zscore(group["spin_rpm"])
         as_weight = ACTIVE_SPIN_WEIGHT.get(pt, 0.0)
         horiz_weight = HORIZ_WEIGHT_OVERRIDE.get(pt, HORIZ_WEIGHT)
