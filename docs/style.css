@@ -42,6 +42,122 @@ body {
   color: var(--muted);
 }
 
+.home-link {
+  margin: 0 0 0.5rem;
+  text-align: left;
+}
+
+.home-link a {
+  color: var(--muted);
+  font-size: 0.85rem;
+  text-decoration: none;
+}
+
+.home-link a:hover {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+.home-toolbar {
+  text-align: right;
+  margin-bottom: 1rem;
+}
+
+.home-full-leaderboard {
+  color: var(--accent);
+  font-weight: 600;
+  font-size: 0.9rem;
+  text-decoration: none;
+}
+
+.home-full-leaderboard:hover {
+  text-decoration: underline;
+}
+
+.pitch-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 1rem;
+}
+
+.pitch-card {
+  display: block;
+  background: white;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 1rem 1.1rem 0.9rem;
+  text-decoration: none;
+  color: var(--ink);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+  transition: box-shadow 0.15s ease, transform 0.15s ease;
+}
+
+.pitch-card:hover {
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.1);
+  transform: translateY(-1px);
+}
+
+.pitch-card h3 {
+  margin: 0 0 0.6rem;
+  font-size: 1.05rem;
+  color: var(--accent);
+}
+
+.home-list {
+  list-style: none;
+  margin: 0 0 0.75rem;
+  padding: 0;
+}
+
+.home-list li {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  padding: 0.25rem 0;
+  border-bottom: 1px solid #f0f0ee;
+  font-size: 0.9rem;
+}
+
+.home-list li:last-child {
+  border-bottom: none;
+}
+
+.home-rank {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  width: 1.4em;
+  flex: 0 0 auto;
+}
+
+.home-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.home-value {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--accent);
+  flex: 0 0 auto;
+}
+
+.home-empty {
+  color: var(--muted);
+  font-size: 0.85rem;
+  font-style: italic;
+  border-bottom: none !important;
+}
+
+.pitch-card-link {
+  display: inline-block;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--accent-strong);
+}
+
 main {
   max-width: 900px;
   margin: 0 auto;
