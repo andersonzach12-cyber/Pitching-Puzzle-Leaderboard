@@ -89,6 +89,70 @@ function renderMoverBox(title, rows, deltaClass) {
   `;
 }
 
+// --------------------------------------------------------------------------
+// Top-right pitcher search -- a lightweight autocomplete that hands off to
+// the full leaderboard page's player view rather than duplicating it here.
+// --------------------------------------------------------------------------
+
+let searchDebounceTimer = null;
+
+async function searchPitchers(query) {
+  const { data, error } = await client
+    .from("pitchers")
+    .select("player_id, pitcher_name")
+    .ilike("pitcher_name", `%${query}%`)
+    .order("pitcher_name")
+    .limit(8);
+  if (error) throw error;
+  return data;
+}
+
+function goToPlayer(playerId, pitcherName) {
+  const params = new URLSearchParams({ player_id: playerId, name: pitcherName });
+  window.location.href = `leaderboard.html?${params.toString()}`;
+}
+
+function renderSearchSuggestions(list) {
+  const box = document.getElementById("home-suggestions");
+  if (!list.length) {
+    box.hidden = true;
+    box.innerHTML = "";
+    return;
+  }
+  box.innerHTML = list.map((p) =>
+    `<button type="button" data-player-id="${p.player_id}">${escapeHtml(p.pitcher_name)}</button>`
+  ).join("");
+  box.hidden = false;
+  Array.from(box.querySelectorAll("button")).forEach((btn, i) => {
+    btn.addEventListener("click", () => goToPlayer(list[i].player_id, list[i].pitcher_name));
+  });
+}
+
+function initHomeSearch() {
+  const input = document.getElementById("home-search");
+  if (!input) return;
+  input.addEventListener("input", (e) => {
+    const q = e.target.value.trim();
+    clearTimeout(searchDebounceTimer);
+    if (q.length < 2) {
+      renderSearchSuggestions([]);
+      return;
+    }
+    searchDebounceTimer = setTimeout(async () => {
+      try {
+        const results = await searchPitchers(q);
+        renderSearchSuggestions(results);
+      } catch (err) {
+        console.error(err);
+      }
+    }, 250);
+  });
+  document.addEventListener("click", (e) => {
+    const box = document.getElementById("home-suggestions");
+    if (!box.contains(e.target) && e.target !== input) box.hidden = true;
+  });
+}
+
 async function fetchLastUpdated() {
   const { data, error } = await client
     .from("refresh_log")
@@ -133,8 +197,8 @@ async function loadHome() {
     ]);
     grid.innerHTML = pitchResults.map(({ pt, rows }) => renderCard(pt, rows)).join("");
     moversRow.innerHTML =
-      renderMoverBox("Biggest Gainers", movers.gainers, "mover-up") +
-      renderMoverBox("Biggest Decliners", movers.decliners, "mover-down");
+      renderMoverBox("Yesterday's Biggest Gainers", movers.gainers, "mover-up") +
+      renderMoverBox("Yesterday's Biggest Decliners", movers.decliners, "mover-down");
     status.textContent = "";
   } catch (err) {
     console.error(err);
@@ -149,5 +213,6 @@ async function loadHome() {
     if (!iso) { el.textContent = ""; return; }
     el.textContent = "Data last refreshed " + new Date(iso).toLocaleString();
   });
+  initHomeSearch();
   loadHome();
 })();
