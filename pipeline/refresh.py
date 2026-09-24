@@ -568,6 +568,49 @@ def fetch_delivery_metrics() -> pd.DataFrame:
 
 
 # --------------------------------------------------------------------------
+# 3b. Today's probable starters, for the site's home-page "pitchers to watch
+#     today" box. This is entirely separate from the uScore pitch-data
+#     pipeline above and from MLB's own Statcast/Savant data -- it hits a
+#     different source (MLB's own Stats API) and is wired up in run() to be
+#     fully isolated: if this fails for any reason (MLB's feed down, a
+#     response-shape change, no games today), it's caught and logged as a
+#     warning there, and the main leaderboard refresh completes normally
+#     either way.
+# --------------------------------------------------------------------------
+
+MLB_SCHEDULE_URL = "https://statsapi.mlb.com/api/v1/schedule"
+
+
+def fetch_probable_starters(target_date: str) -> list[dict]:
+    """Every probable starting pitcher for MLB games on `target_date`
+    (YYYY-MM-DD), one row per starter with their team, opponent, and game
+    time. Returns an empty list on an off day or before starters have been
+    announced -- both normal, not errors."""
+    params = {"sportId": 1, "date": target_date, "hydrate": "probablePitcher,team"}
+    resp = get_with_retries(MLB_SCHEDULE_URL, params=params, timeout=30)
+    payload = resp.json()
+
+    rows = []
+    for date_entry in payload.get("dates", []):
+        for game in date_entry.get("games", []):
+            game_time = game.get("gameDate")
+            teams = game.get("teams", {})
+            for side, other_side in (("home", "away"), ("away", "home")):
+                team_info = teams.get(side, {})
+                pitcher = team_info.get("probablePitcher")
+                if not pitcher or "id" not in pitcher:
+                    continue
+                rows.append({
+                    "game_date": target_date,
+                    "player_id": pitcher["id"],
+                    "team": (team_info.get("team") or {}).get("name"),
+                    "opponent": (teams.get(other_side, {}).get("team") or {}).get("name"),
+                    "game_time": game_time,
+                })
+    return rows
+
+
+# --------------------------------------------------------------------------
 # 4. uScore math -- mirrors the Excel workbook, but z-scores are computed
 #    fresh against this run's league each time (self-calibrating), rather
 #    than the fixed historical constants baked into the one-off workbook.
@@ -974,6 +1017,36 @@ def run():
 
         print(f"Refresh complete: {len(pitchers_rows)} pitchers, {len(pitch_rows)} pitch-type rows "
               f"({len(stale_ids)} stale pitchers removed).")
+
+        # Probable starters for the home page's "pitchers to watch today" box.
+        # Deliberately its own try/except, AFTER the main refresh has already
+        # succeeded and been logged -- a problem here (MLB's feed down, a
+        # response-shape change, no games scheduled) only skips this one box
+        # and never touches the leaderboard data above, which is already
+        # safely written at this point regardless of what happens next.
+        try:
+            today_str = datetime.now().strftime("%Y-%m-%d")
+            probable_rows = fetch_probable_starters(today_str)
+            # Only keep starters who are actually in this run's pitchers
+            # table -- anyone else has no quotient data to rank by anyway,
+            # and pre-filtering here (rather than relying on the database to
+            # reject bad rows) means this insert can never fail with a
+            # foreign-key error.
+            probable_rows = [r for r in probable_rows if r["player_id"] in current_ids]
+            if probable_rows:
+                supabase.table("probable_starters").delete().eq("game_date", today_str).execute()
+                upsert_in_batches(
+                    supabase.table("probable_starters"), probable_rows,
+                    on_conflict="game_date,player_id",
+                )
+                print(f"Probable starters: wrote {len(probable_rows)} qualifying starters for {today_str}.")
+            else:
+                print(f"Probable starters: none found for {today_str} with qualifying uScore data "
+                      f"(off day, starters not yet announced, or none met MIN_PITCHES) -- "
+                      f"leaving existing data for this date as-is.")
+        except Exception as e:
+            print(f"WARNING: probable-starters fetch failed, skipping this run's update -- "
+                  f"leaderboard refresh above is unaffected. Error: {e}", file=sys.stderr)
 
     except Exception as e:
         supabase.table("refresh_log").update({
