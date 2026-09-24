@@ -503,5 +503,15 @@ document.getElementById("pitch-select").addEventListener("change", (e) => {
     if (!iso) { el.textContent = ""; return; }
     el.textContent = "Data last refreshed " + new Date(iso).toLocaleString();
   });
+
+  // Support linking straight into a specific pitch type's leaderboard (e.g.
+  // from the home page's top-pitchers cards): leaderboard.html?pitch=SL
+  const requestedPitch = new URLSearchParams(window.location.search).get("pitch");
+  const pitchSelect = document.getElementById("pitch-select");
+  if (requestedPitch && PITCH_LABELS[requestedPitch]) {
+    state.pitchType = requestedPitch;
+    pitchSelect.value = requestedPitch;
+  }
+
   loadLeaderboard();
 })();
