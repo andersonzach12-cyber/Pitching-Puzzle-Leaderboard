@@ -224,13 +224,20 @@ body {
   color: var(--accent-strong);
 }
 
-/* Gainers / decliners boxes, centered as a pair above the pitch-type grid. */
+/* Gainers / decliners / today's-starters boxes, centered as a row above the
+   pitch-type grid. */
 .movers-row {
   display: grid;
-  grid-template-columns: repeat(2, minmax(240px, 360px));
+  grid-template-columns: repeat(3, minmax(230px, 340px));
   gap: 1rem;
   justify-content: center;
   margin: 0 auto 1.75rem;
+}
+
+@media (max-width: 900px) {
+  .movers-row {
+    grid-template-columns: repeat(2, minmax(230px, 340px));
+  }
 }
 
 .mover-box {
@@ -293,6 +300,55 @@ body {
 
 .mover-down {
   color: #b3261e;
+}
+
+/* "Pitchers to watch today" box -- each row is two lines (name + best
+   pitch on one line, matchup/time below), unlike the single-line gainers/
+   decliners rows, so it gets its own list-item layout rather than reusing
+   .mover-list. */
+.watch-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.watch-list li {
+  padding: 0.35rem 0;
+  border-bottom: 1px solid #f0f0ee;
+}
+
+.watch-list li:last-child {
+  border-bottom: none;
+}
+
+.watch-main {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+}
+
+.watch-name {
+  font-weight: 600;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.watch-pitch {
+  color: var(--accent-strong);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.watch-meta {
+  margin-top: 0.1rem;
+  color: var(--muted);
+  font-size: 0.74rem;
 }
 
 main {
