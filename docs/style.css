@@ -333,6 +333,10 @@ main.home-page {
   margin-bottom: 0.5rem;
 }
 
+.league-strip[hidden] {
+  display: none;
+}
+
 .league-strip {
   display: flex;
   flex-wrap: wrap;
@@ -513,6 +517,17 @@ td.value.tier-good {
   flex-wrap: wrap;
   gap: 0.5rem;
   margin-bottom: 0.75rem;
+}
+
+/* The rule above sets display:flex on this element, which overrides the
+   browser's built-in [hidden] behavior (display:none) -- author CSS always
+   wins over the UA default, regardless of the JS toggling the `hidden`
+   attribute correctly. This is the actual, longstanding root cause of the
+   "stray player header" bug: app.js was always setting `.hidden = true`
+   correctly, but this class kept forcing it visible anyway. Explicitly
+   re-asserting display:none for the hidden state fixes it. */
+.player-header[hidden] {
+  display: none;
 }
 
 .player-header h2 {
