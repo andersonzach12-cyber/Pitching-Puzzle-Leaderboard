@@ -51,6 +51,14 @@ create table if not exists pitch_metrics (
                                                  -- release point is league-wide (1.0 = average delivery)
     quotient          numeric,                   -- this pitch type's contribution to uScore
 
+    prev_quotient     numeric,                   -- this pitch type's quotient as of the PREVIOUS
+                                                   -- refresh, captured just before it's overwritten --
+                                                   -- powers the home page's day-over-day movers boxes.
+                                                   -- Null until a pitcher/pitch-type has been through
+                                                   -- at least two refreshes.
+    prev_captured_at  timestamptz,                -- when prev_quotient was captured (i.e. the previous
+                                                   -- refresh's finish time)
+
     updated_at        timestamptz not null default now(),
     unique (player_id, season, pitch_type)
 );
