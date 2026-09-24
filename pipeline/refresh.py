@@ -155,17 +155,33 @@ IVB_SHAPE = {
 # rewards either extreme. Defaults to "signed" for any pitch type not
 # listed here.
 #
-# NOTE: changeups are deliberately NOT in here yet. A changeup's value is
-# widely believed to come from velocity SEPARATION off the pitcher's own
-# fastball, not from being slow in some absolute, cross-pitcher sense --
-# comparing a changeup's velocity only to the league's changeup average (as
-# every pitch type does today) can't capture that, and treating "slower is
-# always better" (signed_neg) would be too blunt a stand-in. This needs its
-# own investigation into pulling each pitcher's own fastball velocity
-# alongside their changeup before it's touched.
+# Changeups are handled separately from this dict (see CH_VELO_GAP_WEIGHT /
+# CH_RAW_VELO_WEIGHT below) rather than through a simple shape override --
+# real changeup analysis was empirically confirmed to be different for
+# changeups: what makes one deceptive is largely its velocity SEPARATION
+# from the pitcher's OWN fastball, not just being slow in some absolute,
+# cross-pitcher sense. Comparing a changeup's velocity only to the league's
+# changeup average (as every other pitch type does) can't capture that.
 VELO_SHAPE = {
     "CU": "abs", "KC": "abs",
 }
+
+# Changeup velocity is scored as a blend of two things, rather than a single
+# shape flag like every other pitch type:
+#   1. Velocity SEPARATION from the pitcher's own fastball (the harder of
+#      their four-seam or sinker, whichever they throw) -- the main driver
+#      of a changeup's deception, and the majority of the weight.
+#   2. Raw changeup velocity itself, signed so faster is still rewarded --
+#      a smaller, secondary term, since there's still real value in a firm
+#      94 mph changeup over a loopy 78 mph one even at an identical gap off
+#      the fastball (reaction time is governed by the actual pitch speed
+#      too, not just the gap).
+# The two weights sum to 1.0, the same total weight every other pitch type's
+# single velocity term carries, so CH's velocity dimension stays on the same
+# overall scale as the rest of the model -- just split between two signals
+# instead of one.
+CH_VELO_GAP_WEIGHT = 0.7
+CH_RAW_VELO_WEIGHT = 0.3
 
 # Per-pitch-type override for how much horizontal break counts toward the
 # Ceiling formula, in place of the global HORIZ_WEIGHT. Sliders, sweepers,
@@ -638,6 +654,18 @@ def build_delivery_quotients(pitch_metrics_player_ids: pd.Series, delivery: pd.D
     return delivery
 
 
+def build_fastball_baseline(pitch_metrics: pd.DataFrame) -> pd.Series:
+    """Each pitcher's hardest fastball-family pitch (four-seam or sinker --
+    whichever is harder for that pitcher, since either can be the "primary"
+    heater a changeup is meant to look like out of the hand) this season.
+    Returns a Series of velocity indexed by player_id; a pitcher who throws
+    neither simply has no entry (handled as a neutral/no-gap-signal case
+    downstream, same philosophy as a pitcher missing from the arm-angle
+    leaderboard getting a neutral delivery modifier rather than a penalty)."""
+    fastball_rows = pitch_metrics[pitch_metrics["pitch_type"].isin(["FF", "SI"])]
+    return fastball_rows.groupby("player_id")["velo"].max()
+
+
 def compute_pitch_quotients(pitch_metrics: pd.DataFrame, active_spin_fallback: pd.DataFrame,
                              delivery_modifiers: pd.DataFrame) -> pd.DataFrame:
     df = pitch_metrics.copy()
@@ -653,6 +681,8 @@ def compute_pitch_quotients(pitch_metrics: pd.DataFrame, active_spin_fallback: p
     df = df.merge(delivery_modifiers[["player_id", "delivery_modifier"]], on="player_id", how="left")
     df["delivery_modifier"] = df["delivery_modifier"].fillna(1.0)
 
+    fastball_baseline = build_fastball_baseline(pitch_metrics)
+
     out_frames = []
     for pt, group in df.groupby("pitch_type"):
         group = group.copy()
@@ -660,7 +690,18 @@ def compute_pitch_quotients(pitch_metrics: pd.DataFrame, active_spin_fallback: p
             group["active_spin_pct"], ACTIVE_SPIN_SHAPE.get(pt)
         )
         velo_z = zscore(group["velo"])
-        if VELO_SHAPE.get(pt) == "abs":
+        if pt == "CH":
+            # Blend velocity-separation-from-own-fastball with raw velocity
+            # (see CH_VELO_GAP_WEIGHT/CH_RAW_VELO_WEIGHT above) instead of a
+            # single shape flag. A pitcher with no qualifying FF/SI this
+            # season has no baseline to compare against -- treat the gap
+            # term as neutral (0) for just those rows rather than penalizing
+            # or rewarding on an undefined basis.
+            baseline = group["player_id"].map(fastball_baseline)
+            velo_gap = baseline - group["velo"]
+            gap_z = zscore(velo_gap).fillna(0.0)
+            velo_z = CH_VELO_GAP_WEIGHT * gap_z + CH_RAW_VELO_WEIGHT * velo_z
+        elif VELO_SHAPE.get(pt) == "abs":
             velo_z = velo_z.abs()
         elif VELO_SHAPE.get(pt) == "signed_neg":
             velo_z = -velo_z
