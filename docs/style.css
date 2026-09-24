@@ -18,10 +18,71 @@ body {
 }
 
 .page-header {
+  position: relative;
   padding: 2rem 1.5rem 1rem;
   text-align: center;
   border-bottom: 1px solid var(--line);
   background: white;
+}
+
+/* Home page's top-right pitcher search -- a small, quiet control (icon +
+   "Find a pitcher" label above the input) so it reads as a search function
+   without competing with the page title for attention. */
+.home-search-wrap {
+  position: absolute;
+  top: 1.1rem;
+  right: 1.5rem;
+  text-align: left;
+}
+
+.home-search-label {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  margin-bottom: 0.25rem;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  cursor: pointer;
+}
+
+.home-search-icon {
+  width: 12px;
+  height: 12px;
+  color: var(--muted);
+  flex: 0 0 auto;
+}
+
+.home-search-wrap input {
+  width: 190px;
+  padding: 0.4rem 0.65rem;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font-size: 0.85rem;
+  background: white;
+  color: var(--ink);
+}
+
+.home-search-wrap input:focus {
+  outline: none;
+  border-color: var(--accent-strong);
+}
+
+.home-search-wrap .suggestions {
+  width: 190px;
+}
+
+@media (max-width: 640px) {
+  .home-search-wrap {
+    position: static;
+    display: inline-block;
+    margin-top: 0.9rem;
+  }
+  .home-search-label {
+    justify-content: center;
+  }
 }
 
 .page-header h1 {
