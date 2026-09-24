@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>uScore Leaderboard</title>
+  <meta name="description" content="Pitch-by-pitch uniqueness leaderboard for MLB pitchers." />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="page-header">
+    <p class="home-link"><a href="index.html">&larr; Home</a></p>
+    <h1>uScore Leaderboard</h1>
+    <p class="subtitle">Real-time ratings of pitch characteristics and their uniqueness relative to the rest of the league.</p>
+    <p class="updated-at" id="updated-at">Loading...</p>
+  </header>
+
+  <main>
+    <div class="controls">
+      <div class="search-wrap">
+        <input id="search" type="search" placeholder="Search a pitcher to see every pitch they throw..." aria-label="Search pitcher" autocomplete="off" />
+        <div id="suggestions" class="suggestions" hidden></div>
+      </div>
+
+      <label for="pitch-select">Pitch type</label>
+      <select id="pitch-select">
+        <option value="FF" selected>4-Seam Fastball</option>
+        <option value="SI">Sinker</option>
+        <option value="FC">Cutter</option>
+        <option value="CH">Changeup</option>
+        <option value="FS">Splitter</option>
+        <option value="FO">Forkball</option>
+        <option value="CU">Curveball</option>
+        <option value="KC">Knuckle Curve</option>
+        <option value="CS">Slow Curve</option>
+        <option value="SL">Slider</option>
+        <option value="ST">Sweeper</option>
+        <option value="SV">Slurve</option>
+      </select>
+    </div>
+
+    <div id="league-strip" class="league-strip" hidden></div>
+
+    <div id="status" class="status" role="status"></div>
+
+    <div id="player-header" class="player-header" hidden>
+      <h2 id="player-name"></h2>
+      <button id="back-to-leaderboard" type="button">&larr; Back to leaderboard</button>
+    </div>
+
+    <table id="leaderboard">
+      <thead id="leaderboard-head"></thead>
+      <tbody id="leaderboard-body"></tbody>
+    </table>
+
+    <details class="methodology">
+      <summary>How uScore works</summary>
+      <div class="methodology-body">
+        <p><strong>What it measures.</strong> uScore rates every pitch a pitcher throws by how unusual its physical characteristics are compared to everyone else who throws that <em>same</em> pitch type this season &mdash; a slider is only measured against other sliders, a sinker only against other sinkers, and so on, since "unique" means something different for each pitch shape.</p>
+        <p><strong>What goes into it.</strong> For each pitch, we take velocity, induced vertical break (rise/drop), horizontal break (side-to-side movement), spin rate, and &mdash; where Statcast publishes it &mdash; active spin%, and measure how many standard deviations each one sits from the league average for that pitch type. Movement is weighted most heavily, since a pitch's shape and deception generally matter more than raw velocity for making it hard to hit. Horizontal break is normalized to a consistent "arm-side positive, glove-side negative" convention regardless of which hand a pitcher throws with, so left- and right-handed pitchers are directly comparable rather than being scored against a mixed-up, mirrored scale.</p>
+        <p><strong>Why usage matters.</strong> The quotient shown here also factors in how often a pitcher actually throws that pitch. A pitch with freakish characteristics that's rarely used scores lower than an equally unique pitch that's a real, trusted weapon in the pitcher's mix &mdash; the goal is to reflect the pitch's actual impact, not just its raw numbers on paper.</p>
+        <p><strong>Delivery matters too.</strong> Release characteristics &mdash; extension, arm angle, release height, horizontal release point &mdash; affect how hard <em>every</em> pitch a pitcher throws is to pick up, not just what the ball does after it leaves the hand. Every pitch's quotient is nudged up or down by a delivery modifier based on how unusual that pitcher's release point is relative to the rest of the league this season (1.00&times; is a perfectly average delivery). It's intentionally a gentle multiplier, not a dominant factor &mdash; a pitch's own velocity, movement, and spin still drive the vast majority of its score.</p>
+        <p><strong>Data and sample size.</strong> Numbers come straight from Baseball Savant's tracked pitch data for the current regular season and postseason (spring training is excluded). A pitcher needs at least 25 tracked pitches of a given type this season to appear on that pitch type's leaderboard, to keep small, noisy samples out.</p>
+        <p><strong>A caveat worth knowing.</strong> Pitch-type labels come straight from Statcast's own automatic classifier. For pitchers who throw an unusual, hybrid-shaped pitch, that classifier can occasionally split what's really one pitch across two labels (for example, tagging some of a pitcher's splitter-changeup hybrid as "Splitter" and some as "Changeup"). If a pitcher you'd expect to see isn't showing up where you'd guess, it's worth checking the neighboring pitch type.</p>
+      </div>
+    </details>
+  </main>
+
+  <footer>
+    <p>Data refreshes daily from Baseball Savant. uScore measures how far each pitch deviates from league norms for that pitch type.</p>
+  </footer>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+  <script src="config.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
