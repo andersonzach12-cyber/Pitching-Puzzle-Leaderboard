@@ -109,14 +109,45 @@ SPIN_WEIGHT = 0.10
 DELIVERY_WEIGHT_IN_USCORE = 0.3
 
 # Whether induced vertical break should reward a specific direction
-# ("signed" -- e.g. more "ride"/less drop is unambiguously better for a
-# fastball) or reward distance from league-average IVB in EITHER direction
-# ("abs" -- for slider-family pitches, a pitch that dives more than average
-# can be just as much of a weapon as one that sweeps/rises more than
-# average; there's no single "better" direction). Defaults to "signed" for
-# any pitch type not listed here.
+# ("signed" -- more "ride"/less drop rewarded, the default), the opposite
+# direction ("signed_neg" -- more drop rewarded), or distance from
+# league-average IVB in EITHER direction ("abs" -- for pitches where tilt
+# itself is the weapon and there's no single "better" direction: a
+# slider-family pitch that dives more than average can be just as much of a
+# threat as one that sweeps/rises more, and a cutter's value can come from
+# exceptional depth (e.g. Drew Rasmussen's, which drops far more than a
+# typical cutter and grades as his best pitch by results) just as easily as
+# from exceptional ride).
+#   - Changeups, curveballs, and knuckle curves are valued specifically for
+#     dropping MORE than average (real deception/tunneling off the
+#     fastball) -- "signed_neg", so more drop is rewarded, not penalized.
+#   - Sliders, sweepers, slurves, and cutters get real value from either
+#     kind of unusual tilt -- "abs".
+# Defaults to "signed" for any pitch type not listed here.
 IVB_SHAPE = {
-    "SL": "abs", "ST": "abs", "SV": "abs",
+    "SL": "abs", "ST": "abs", "SV": "abs", "FC": "abs",
+    "CH": "signed_neg", "CU": "signed_neg", "KC": "signed_neg",
+}
+
+# Whether velocity should reward being faster ("signed", the default),
+# reward being SLOWER than average ("signed_neg"), or reward distance from
+# league-average velocity in EITHER direction ("abs"). Curveballs and
+# knuckle curves don't have one "better" speed -- a firm, hard curve (more
+# like Glasnow's) and a slow, loopy one (more like Valdez's, with a huge gap
+# off his fastball) can both be elite for different reasons, so "abs"
+# rewards either extreme. Defaults to "signed" for any pitch type not
+# listed here.
+#
+# NOTE: changeups are deliberately NOT in here yet. A changeup's value is
+# widely believed to come from velocity SEPARATION off the pitcher's own
+# fastball, not from being slow in some absolute, cross-pitcher sense --
+# comparing a changeup's velocity only to the league's changeup average (as
+# every pitch type does today) can't capture that, and treating "slower is
+# always better" (signed_neg) would be too blunt a stand-in. This needs its
+# own investigation into pulling each pitcher's own fastball velocity
+# alongside their changeup before it's touched.
+VELO_SHAPE = {
+    "CU": "abs", "KC": "abs",
 }
 
 # Per-pitch-type override for how much horizontal break counts toward the
@@ -612,9 +643,15 @@ def compute_pitch_quotients(pitch_metrics: pd.DataFrame, active_spin_fallback: p
             group["active_spin_pct"], ACTIVE_SPIN_SHAPE.get(pt)
         )
         velo_z = zscore(group["velo"])
+        if VELO_SHAPE.get(pt) == "abs":
+            velo_z = velo_z.abs()
+        elif VELO_SHAPE.get(pt) == "signed_neg":
+            velo_z = -velo_z
         ivb_z = zscore(group["ivb_in"])
         if IVB_SHAPE.get(pt) == "abs":
             ivb_z = ivb_z.abs()
+        elif IVB_SHAPE.get(pt) == "signed_neg":
+            ivb_z = -ivb_z
         horiz_z = zscore(group["horizontal_in"])
         if HORIZ_SHAPE.get(pt) == "abs":
             horiz_z = horiz_z.abs()
