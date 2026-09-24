@@ -18,9 +18,12 @@ const PITCH_LABELS = {
 const HOME_PITCH_TYPES = ["FF", "SI", "FC", "CH", "FS", "CU", "KC", "SL", "ST", "SV"];
 const TOP_N = 10;
 
-function formatValue(v) {
+// display_score is already rounded to a whole number server-side (100 =
+// league average for that pitch type, like Stuff+) -- this just guards
+// against it coming back as e.g. "103.0" and strips the decimal.
+function formatScore(v) {
   if (v === null || v === undefined || Number.isNaN(v)) return "-";
-  return Number(v).toFixed(3);
+  return String(Math.round(Number(v)));
 }
 
 function escapeHtml(s) {
@@ -32,39 +35,41 @@ function escapeHtml(s) {
 async function fetchTopN(pitchType) {
   const { data, error } = await client
     .from("pitch_metrics")
-    .select("quotient, pitchers(pitcher_name)")
+    .select("display_score, pitchers(pitcher_name)")
     .eq("pitch_type", pitchType)
-    .order("quotient", { ascending: false })
+    .order("display_score", { ascending: false })
     .limit(TOP_N);
   if (error) throw error;
   return data.map((r) => ({
     pitcher_name: r.pitchers ? r.pitchers.pitcher_name : "(unknown)",
-    quotient: r.quotient,
+    score: r.display_score,
   }));
 }
 
 function formatDelta(v) {
   if (v === null || v === undefined || Number.isNaN(v)) return "-";
-  const sign = v > 0 ? "+" : "";
-  return sign + Number(v).toFixed(3);
+  const rounded = Math.round(Number(v));
+  const sign = rounded > 0 ? "+" : "";
+  return sign + String(rounded);
 }
 
-// Every pitch-type row that has a prev_quotient (i.e. has been through at
-// least two refreshes), with the day-over-day delta computed client-side --
-// simplest way to sort/slice into gainers vs. decliners without needing a
-// generated column or a second round-trip per pitch type.
+// Every pitch-type row that has a prev_display_score (i.e. has been through
+// at least two refreshes), with the day-over-day delta computed client-side
+// in display_score's 100-average units -- simplest way to sort/slice into
+// gainers vs. decliners without needing a generated column or a second
+// round-trip per pitch type.
 async function fetchMovers() {
   const { data, error } = await client
     .from("pitch_metrics")
-    .select("pitch_type, quotient, prev_quotient, pitchers(pitcher_name)")
-    .not("prev_quotient", "is", null)
+    .select("pitch_type, display_score, prev_display_score, pitchers(pitcher_name)")
+    .not("prev_display_score", "is", null)
     .limit(5000);
   if (error) throw error;
   const withDelta = data
     .map((r) => ({
       pitcher_name: r.pitchers ? r.pitchers.pitcher_name : "(unknown)",
       pitch_type: r.pitch_type,
-      delta: r.quotient - r.prev_quotient,
+      delta: r.display_score - r.prev_display_score,
     }))
     .filter((r) => !Number.isNaN(r.delta));
   const gainers = [...withDelta].sort((a, b) => b.delta - a.delta).slice(0, 5);
@@ -129,14 +134,14 @@ async function fetchWatchList() {
   const ids = starters.map((s) => s.player_id);
   const { data: pitches, error: pitchesError } = await client
     .from("pitch_metrics")
-    .select("player_id, pitch_type, quotient")
+    .select("player_id, pitch_type, display_score")
     .in("player_id", ids);
   if (pitchesError) throw pitchesError;
 
   const bestByPlayer = {};
   (pitches || []).forEach((p) => {
     const cur = bestByPlayer[p.player_id];
-    if (p.quotient != null && (!cur || p.quotient > cur.quotient)) bestByPlayer[p.player_id] = p;
+    if (p.display_score != null && (!cur || p.display_score > cur.display_score)) bestByPlayer[p.player_id] = p;
   });
 
   const combined = starters
@@ -149,12 +154,12 @@ async function fetchWatchList() {
         opponent: s.opponent,
         game_time: s.game_time,
         pitch_type: best.pitch_type,
-        quotient: best.quotient,
+        score: best.display_score,
       };
     })
     .filter(Boolean);
 
-  return combined.sort((a, b) => b.quotient - a.quotient).slice(0, WATCH_TOP_N);
+  return combined.sort((a, b) => b.score - a.score).slice(0, WATCH_TOP_N);
 }
 
 function renderWatchBox(rows) {
@@ -166,7 +171,7 @@ function renderWatchBox(rows) {
       <li>
         <div class="watch-main">
           <span class="watch-name">${escapeHtml(r.pitcher_name || "")}</span>
-          <span class="watch-pitch">${escapeHtml(PITCH_LABELS[r.pitch_type] || r.pitch_type)} (${formatValue(r.quotient)})</span>
+          <span class="watch-pitch">${escapeHtml(PITCH_LABELS[r.pitch_type] || r.pitch_type)} (${formatScore(r.score)})</span>
         </div>
         ${meta ? `<div class="watch-meta">${meta}</div>` : ""}
       </li>
@@ -261,7 +266,7 @@ function renderCard(pitchType, rows) {
     <li>
       <span class="home-rank">${i + 1}</span>
       <span class="home-name">${escapeHtml(r.pitcher_name || "")}</span>
-      <span class="home-value">${formatValue(r.quotient)}</span>
+      <span class="home-value">${formatScore(r.score)}</span>
     </li>
   `).join("");
 
