@@ -108,6 +108,23 @@ HORIZ_WEIGHT = 0.25
 SPIN_WEIGHT = 0.10
 DELIVERY_WEIGHT_IN_USCORE = 0.3
 
+# usage_rate is dampened with an exponent < 1 rather than applied linearly.
+# Plain linear usage let raw usage share swing a pitch's score by as much as
+# (or more than) real differences in shape -- e.g. two cutters with a
+# similar underlying quality but an 8x usage gap ended up with a >50x
+# quotient gap, almost all of it from usage alone. usage_rate is still meant
+# to separate "a freakish pitch rarely used" from "a real, trusted weapon"
+# (that's the whole reason it's here), just without letting it swamp the
+# pitch's own velocity/movement/spin. 0.75 was chosen as a middle ground
+# after comparing it against full sqrt (0.5) on the real leaderboard: sqrt
+# cut usage's influence so far that even elite, heavily-used pitches (e.g. a
+# slider thrown half the time) lost meaningful ground to rarely-thrown ones,
+# which undersells usage's intended signal; 0.75 fixes the worst of the
+# linear-scaling distortion while keeping a high-usage pitch clearly ahead
+# of an identically-shaped low-usage one. Can be dialed up/down later if the
+# live results call for it.
+USAGE_RATE_EXPONENT = 0.75
+
 # Whether induced vertical break should reward a specific direction
 # ("signed" -- more "ride"/less drop rewarded, the default), the opposite
 # direction ("signed_neg" -- more drop rewarded), or distance from
@@ -672,7 +689,10 @@ def compute_pitch_quotients(pitch_metrics: pd.DataFrame, active_spin_fallback: p
         # every pitch a pitcher throws harder to pick up, not just the pitch
         # itself in isolation -- so the delivery modifier applies here, to
         # every pitch type, rather than only to a composite pitcher score.
-        group["quotient"] = ceiling * group["usage_rate"] * group["delivery_modifier"]
+        #
+        group["quotient"] = (
+            ceiling * (group["usage_rate"] ** USAGE_RATE_EXPONENT) * group["delivery_modifier"]
+        )
         out_frames.append(group)
 
     result = pd.concat(out_frames, ignore_index=True)
