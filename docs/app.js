@@ -434,7 +434,10 @@ async function selectPlayer(playerId, pitcherName) {
 function backToLeaderboard() {
   state.view = "leaderboard";
   state.expandedKey = null;
+  state.playerName = "";
+  state.playerRows = [];
   document.getElementById("search").value = "";
+  document.getElementById("player-header").hidden = true;
   renderLeaderboard();
   renderLeagueStrip();
 }
