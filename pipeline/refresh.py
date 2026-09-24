@@ -329,6 +329,8 @@ def compute_pitch_metrics_from_events(events: pd.DataFrame) -> tuple[pd.DataFram
             f"Actual columns were: {list(df.columns)}"
         )
     raw_horizontal_in = pd.to_numeric(df[resolved["horizontal_in_raw"]], errors="coerce") * 12
+    p_throws_counts = df["p_throws"].astype(str).str.upper().value_counts().to_dict()
+    print("p_throws raw value counts (sanity check -- expecting only 'R' and 'L'):", p_throws_counts)
     is_rhp = df["p_throws"].astype(str).str.upper().eq("R")
     df["horizontal_in"] = raw_horizontal_in.where(~is_rhp, -raw_horizontal_in)
 
