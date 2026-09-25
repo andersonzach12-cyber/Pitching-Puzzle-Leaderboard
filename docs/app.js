@@ -25,6 +25,8 @@ const PITCH_LABELS = {
   SL: "Slider", ST: "Sweeper", SV: "Slurve",
 };
 
+const LEADERBOARD_LIMIT = 250;
+
 const state = {
   view: "leaderboard", // "leaderboard" | "player"
   pitchType: "FF",
@@ -36,6 +38,8 @@ const state = {
   playerRows: [],       // player view: one row per pitch type they throw
   suggestions: [],
   chartCache: {},       // pitch_type -> cloud rows, cached per session to avoid refetching
+  totalCount: null,     // how many pitchers qualify for the current pitch type, total (not just what's loaded)
+  showingAll: false,    // false = capped at LEADERBOARD_LIMIT (the default view); true = every qualifying pitcher
 };
 
 let searchDebounceTimer = null;
@@ -44,8 +48,8 @@ let searchDebounceTimer = null;
 // Data fetching
 // --------------------------------------------------------------------------
 
-async function fetchPitchTypeLeaderboard(pitchType) {
-  const { data, error } = await client
+async function fetchPitchTypeLeaderboard(pitchType, { limit = LEADERBOARD_LIMIT } = {}) {
+  let query = client
     .from("pitch_metrics")
     .select("player_id, display_score, usage_rate, velo, ivb_in, horizontal_in, spin_rpm, active_spin_pct, delivery_modifier, pitchers(pitcher_name)")
     .eq("pitch_type", pitchType)
@@ -56,8 +60,13 @@ async function fetchPitchTypeLeaderboard(pitchType) {
     // scores below it. The .not() filter above already excludes nulls
     // entirely; nullsFirst: false is a second, independent guard against
     // the same failure mode.
-    .order("display_score", { ascending: false, nullsFirst: false })
-    .limit(250);
+    .order("display_score", { ascending: false, nullsFirst: false });
+  // limit: null means "every qualifying pitcher" (the "show all" expansion)
+  // -- omit .limit() entirely rather than passing a huge number, so this
+  // stays correct even if a pitch type someday has more qualifiers than
+  // whatever number we might have guessed as "big enough".
+  if (limit != null) query = query.limit(limit);
+  const { data, error } = await query;
   if (error) throw error;
   return data.map((r) => ({
     player_id: r.player_id,
@@ -71,6 +80,18 @@ async function fetchPitchTypeLeaderboard(pitchType) {
     active_spin_pct: r.active_spin_pct,
     delivery_modifier: r.delivery_modifier,
   }));
+}
+
+// A cheap count-only query (no rows fetched) so the "showing top 250 of N"
+// footer can report the true total even before anyone clicks "show all".
+async function fetchQualifyingCount(pitchType) {
+  const { count, error } = await client
+    .from("pitch_metrics")
+    .select("player_id", { count: "exact", head: true })
+    .eq("pitch_type", pitchType)
+    .not("display_score", "is", null);
+  if (error) throw error;
+  return count || 0;
 }
 
 async function fetchCloud(pitchType) {
@@ -296,6 +317,58 @@ function renderLeaderboard() {
       body.appendChild(detailTr);
     }
   });
+
+  renderLeaderboardFooter();
+}
+
+// Below the table: by default the leaderboard caps at LEADERBOARD_LIMIT so
+// the page stays fast and the table stays a manageable length -- but capping
+// at, say, 250 out of a pitch type with 700+ qualifying pitchers means only
+// the top slice (all comfortably above the 100 average) is ever visible,
+// which reads as if uScore skews high when it's really just showing the
+// best of the best. This footer makes the cap visible and gives a way past
+// it, so the full, honest distribution -- including everything below 100 --
+// is always one click away.
+function renderLeaderboardFooter() {
+  const el = document.getElementById("leaderboard-footer");
+  if (!el) return;
+  if (state.totalCount == null || state.totalCount <= state.rows.length) {
+    el.innerHTML = "";
+    return;
+  }
+  if (state.showingAll) {
+    el.innerHTML = `
+      <span class="leaderboard-footer-note">Showing all ${state.totalCount} qualifying pitchers</span>
+      <button type="button" id="show-top-btn">Show top ${LEADERBOARD_LIMIT} only</button>
+    `;
+    document.getElementById("show-top-btn").addEventListener("click", () => {
+      state.showingAll = false;
+      loadLeaderboard();
+    });
+  } else {
+    el.innerHTML = `
+      <span class="leaderboard-footer-note">Showing top ${state.rows.length} of ${state.totalCount} qualifying pitchers</span>
+      <button type="button" id="show-all-btn">Show all ${state.totalCount} &darr;</button>
+    `;
+    document.getElementById("show-all-btn").addEventListener("click", expandLeaderboard);
+  }
+}
+
+async function expandLeaderboard() {
+  document.getElementById("status").textContent = "Loading full leaderboard...";
+  try {
+    const rows = await fetchPitchTypeLeaderboard(state.pitchType, { limit: null });
+    state.rows = rows;
+    state.chartCache[state.pitchType] = rows;
+    state.showingAll = true;
+    state.expandedKey = null;
+    renderLeaderboard();
+    renderLeagueStrip();
+    document.getElementById("status").textContent = "";
+  } catch (err) {
+    console.error(err);
+    document.getElementById("status").textContent = "Couldn't load the full leaderboard.";
+  }
 }
 
 function toggleLeaderboardDetail(playerId) {
@@ -331,8 +404,15 @@ function renderLeagueStrip() {
 async function loadLeaderboard() {
   document.getElementById("player-header").hidden = true;
   document.getElementById("status").textContent = "Loading...";
+  state.showingAll = false;
   try {
-    state.rows = await fetchCloud(state.pitchType);
+    const [rows, totalCount] = await Promise.all([
+      fetchPitchTypeLeaderboard(state.pitchType, { limit: LEADERBOARD_LIMIT }),
+      fetchQualifyingCount(state.pitchType),
+    ]);
+    state.rows = rows;
+    state.chartCache[state.pitchType] = rows;
+    state.totalCount = totalCount;
     state.expandedKey = null;
     renderLeaderboard();
     renderLeagueStrip();
