@@ -890,6 +890,38 @@ def upsert_in_batches(table, rows: list[dict], batch_size: int = 500, on_conflic
         table.upsert(rows[i:i + batch_size], **kwargs).execute()
 
 
+def fetch_all_rows(build_query, page_size: int = 1000) -> list[dict]:
+    """Runs a Supabase select repeatedly with .range() pagination and
+    concatenates every page into one list.
+
+    A plain, unpaginated `.select(...).execute()` doesn't error when a
+    table has more rows than PostgREST's default per-request cap (around
+    1000) -- it just silently returns a partial result. That's harmless for
+    a query whose result gets displayed, but dangerous for one that DECIDES
+    something: this exact bug let stale pitch_metrics rows survive
+    undetected (the cleanup below could only ever "see" the first slice of
+    the table, so anything past the cap was never even considered stale or
+    fresh) and separately truncated the correlation-analysis script's own
+    read of this same table. Anywhere this pipeline reads back its own
+    already-written data to compare against or build on, it needs to see
+    the WHOLE table, not just however much fit in one page.
+
+    `build_query` is a zero-arg callable of (start, end) -> a fresh, not-
+    yet-executed Supabase query with `.range(start, end)` applied -- fresh
+    each call, since a query builder is spent after one `.execute()`."""
+    all_rows: list[dict] = []
+    start = 0
+    while True:
+        page = build_query(start, start + page_size - 1).execute().data
+        if not page:
+            break
+        all_rows.extend(page)
+        if len(page) < page_size:
+            break  # a partial page means this was the last one
+        start += page_size
+    return all_rows
+
+
 def run():
     supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
     log_row = supabase.table("refresh_log").insert({"status": "running"}).execute().data[0]
@@ -959,9 +991,11 @@ def run():
         # Has to happen after the upserts above would be too late (the old
         # value would already be gone), so this reads the table one last
         # time before writing anything.
-        existing_quotients = supabase.table("pitch_metrics").select(
-            "player_id, pitch_type, quotient, display_score"
-        ).eq("season", SEASON).execute().data
+        existing_quotients = fetch_all_rows(
+            lambda start, end: supabase.table("pitch_metrics").select(
+                "player_id, pitch_type, quotient, display_score"
+            ).eq("season", SEASON).range(start, end)
+        )
         prev_map = {
             (row["player_id"], row["pitch_type"]): row["quotient"]
             for row in existing_quotients if row["quotient"] is not None
@@ -1021,7 +1055,9 @@ def run():
         # longer present -- pitch_metrics rows are removed automatically
         # via the "on delete cascade" foreign key set up in schema.sql.
         current_ids = {r["player_id"] for r in pitchers_rows}
-        existing = supabase.table("pitchers").select("player_id").eq("season", SEASON).execute().data
+        existing = fetch_all_rows(
+            lambda start, end: supabase.table("pitchers").select("player_id").eq("season", SEASON).range(start, end)
+        )
         stale_ids = [row["player_id"] for row in existing if row["player_id"] not in current_ids]
         for i in range(0, len(stale_ids), 500):
             chunk = stale_ids[i:i + 500]
@@ -1046,9 +1082,11 @@ def run():
         # Same idea as the cleanup above, just scoped to the finer
         # (player_id, pitch_type) grain pitch_metrics actually keys on.
         current_pitch_keys = {(r["player_id"], r["pitch_type"]) for r in pitch_rows}
-        existing_pitch_keys = supabase.table("pitch_metrics").select(
-            "player_id, pitch_type"
-        ).eq("season", SEASON).execute().data
+        existing_pitch_keys = fetch_all_rows(
+            lambda start, end: supabase.table("pitch_metrics").select(
+                "player_id, pitch_type"
+            ).eq("season", SEASON).range(start, end)
+        )
         stale_by_player: dict[int, list[str]] = {}
         for row in existing_pitch_keys:
             key = (row["player_id"], row["pitch_type"])
