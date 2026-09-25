@@ -57,6 +57,23 @@ from supabase import create_client
 SEASON = int(os.environ.get("USCORE_SEASON", datetime.now().year))
 MIN_PITCHES = int(os.environ.get("USCORE_MIN_PITCHES", 25))  # per pitch type, to filter out tiny samples
 
+# Savant's "player_type": "pitcher" filter means "whoever was on the mound
+# for this pitch" -- it has no concept of a player's primary position, so a
+# position player taking the mound for an inning in a blowout is included
+# exactly like a real pitcher. Their pitches are wildly unlike an actual
+# pitcher's (much slower, unusual movement, often from an unpracticed arm
+# slot), and even 25-30 of them can clear the per-pitch-type MIN_PITCHES bar
+# above for a single pitch type, producing a leaderboard entry that's a
+# statistical freak next to real pitchers rather than a meaningful one (this
+# is exactly what a -64 Slider score turned out to be -- a position player,
+# not a data bug). A real MLB pitcher, even a September call-up with a
+# handful of appearances, throws several hundred pitches across a season at
+# minimum; an incidental mound appearance is almost always under a few dozen
+# total. Filtering on TOTAL pitches across every type this season (not just
+# one type) is a simple, reliable way to separate the two without needing
+# roster/position data from a different source.
+MIN_SEASON_PITCHES_TO_QUALIFY = int(os.environ.get("USCORE_MIN_SEASON_PITCHES", 100))
+
 SUPABASE_URL = os.environ["SUPABASE_URL"]
 SUPABASE_SERVICE_KEY = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
 
@@ -451,6 +468,13 @@ def compute_pitch_metrics_from_events(events: pd.DataFrame) -> tuple[pd.DataFram
 
     grouped = grouped.merge(per_pitcher_totals, on="player_id", how="left")
     grouped["usage_rate"] = grouped["n_pitches"] / grouped["total_pitches"]
+    n_before_position_player_filter = grouped["player_id"].nunique()
+    grouped = grouped[grouped["total_pitches"] >= MIN_SEASON_PITCHES_TO_QUALIFY].copy()
+    n_removed = n_before_position_player_filter - grouped["player_id"].nunique()
+    if n_removed:
+        print(f"Excluded {n_removed} player(s) with fewer than {MIN_SEASON_PITCHES_TO_QUALIFY} "
+              f"total pitches this season (likely position players who took the mound briefly, "
+              f"not real pitchers).")
     grouped = grouped[grouped["n_pitches"] >= MIN_PITCHES].copy()
     grouped["active_spin_pct"] = None
 
