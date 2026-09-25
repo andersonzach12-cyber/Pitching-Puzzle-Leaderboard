@@ -242,8 +242,16 @@ function buildMovementChartSvg(cloud, highlightPlayerId, pitchType) {
   `;
 }
 
-function buildDetailPanel(row, cloud, pitchType) {
+// showProfileLink is only true when this panel is opened from the
+// per-pitch-type leaderboard, where the person hasn't navigated to this
+// pitcher's own profile yet. When it's opened from the player (arsenal)
+// view, they're already looking at that pitcher's full profile, so the
+// link would be a no-op and is left off.
+function buildDetailPanel(row, cloud, pitchType, { showProfileLink = false } = {}) {
   const chart = buildMovementChartSvg(cloud, row.player_id, pitchType);
+  const profileLink = showProfileLink
+    ? `<button type="button" class="view-profile-btn">View full profile &rarr;</button>`
+    : "";
   return `
     <div class="detail-panel">
       <div class="detail-stats">
@@ -257,6 +265,7 @@ function buildDetailPanel(row, cloud, pitchType) {
           <dt>Delivery modifier</dt><dd title="How unusual this pitcher's release point is league-wide -- 1.00 is a perfectly average delivery">${formatStat(row.delivery_modifier, 2, "&times;")}</dd>
           <dt title="100 = league average for this pitch type; higher = more unique">uScore</dt><dd>${formatScore(row.value != null ? row.value : row.display_score)}</dd>
         </dl>
+        ${profileLink}
       </div>
       <div class="detail-chart">${chart}</div>
     </div>
@@ -312,7 +321,14 @@ function renderLeaderboard() {
       detailTr.className = "detail-row";
       const td = document.createElement("td");
       td.colSpan = 4;
-      td.innerHTML = buildDetailPanel(r, state.rows, state.pitchType);
+      td.innerHTML = buildDetailPanel(r, state.rows, state.pitchType, { showProfileLink: true });
+      const profileBtn = td.querySelector(".view-profile-btn");
+      if (profileBtn) {
+        profileBtn.addEventListener("click", (e) => {
+          e.stopPropagation(); // don't also re-toggle this row's own detail panel
+          selectPlayer(r.player_id, r.pitcher_name);
+        });
+      }
       detailTr.appendChild(td);
       body.appendChild(detailTr);
     }
