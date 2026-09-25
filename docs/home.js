@@ -1,4 +1,4 @@
-// uScore home page: a top-N grid across every pitch type with enough
+// uScore+ home page: a top-N grid across every pitch type with enough
 // pitchers to make a real leaderboard, each card linking into the full
 // leaderboard for that pitch type.
 
