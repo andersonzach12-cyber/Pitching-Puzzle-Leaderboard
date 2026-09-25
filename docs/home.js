@@ -32,10 +32,18 @@ function escapeHtml(s) {
   return div.innerHTML;
 }
 
+// Every pitcher name on the home page (top-10 cards, movers boxes, watch
+// list) links here rather than just being plain text -- same destination
+// the top-right search box sends you to.
+function playerProfileUrl(playerId, pitcherName) {
+  const params = new URLSearchParams({ player_id: playerId, name: pitcherName || "" });
+  return `leaderboard.html?${params.toString()}`;
+}
+
 async function fetchTopN(pitchType) {
   const { data, error } = await client
     .from("pitch_metrics")
-    .select("display_score, pitchers(pitcher_name)")
+    .select("player_id, display_score, pitchers(pitcher_name)")
     .eq("pitch_type", pitchType)
     .not("display_score", "is", null)
     // Postgres sorts NULLs FIRST by default on a descending order, so
@@ -49,6 +57,7 @@ async function fetchTopN(pitchType) {
     .limit(TOP_N);
   if (error) throw error;
   return data.map((r) => ({
+    player_id: r.player_id,
     pitcher_name: r.pitchers ? r.pitchers.pitcher_name : "(unknown)",
     score: r.display_score,
   }));
@@ -117,6 +126,7 @@ async function fetchMovers() {
       const prevScore = snapshotByKey.get(`${r.player_id}|${r.pitch_type}`);
       if (prevScore === undefined) return null; // no snapshot old enough yet for this pitcher/pitch
       return {
+        player_id: r.player_id,
         pitcher_name: r.pitchers ? r.pitchers.pitcher_name : "(unknown)",
         pitch_type: r.pitch_type,
         delta: r.display_score - prevScore,
@@ -132,7 +142,7 @@ async function fetchMovers() {
 function renderMoverBox(title, rows, deltaClass) {
   const items = rows.map((r) => `
     <li>
-      <span class="mover-name">${escapeHtml(r.pitcher_name || "")}</span>
+      <a class="mover-name" href="${playerProfileUrl(r.player_id, r.pitcher_name)}">${escapeHtml(r.pitcher_name || "")}</a>
       <span class="mover-pitch">${escapeHtml(PITCH_LABELS[r.pitch_type] || r.pitch_type)}</span>
       <span class="mover-delta ${deltaClass}">${formatDelta(r.delta)}</span>
     </li>
@@ -201,6 +211,7 @@ async function fetchWatchList() {
       const best = bestByPlayer[s.player_id];
       if (!best) return null; // no qualifying pitch data to rank this starter by
       return {
+        player_id: s.player_id,
         pitcher_name: s.pitchers ? s.pitchers.pitcher_name : "(unknown)",
         team: s.team,
         opponent: s.opponent,
@@ -222,7 +233,7 @@ function renderWatchBox(rows) {
     return `
       <li>
         <div class="watch-main">
-          <span class="watch-name">${escapeHtml(r.pitcher_name || "")}</span>
+          <a class="watch-name" href="${playerProfileUrl(r.player_id, r.pitcher_name)}">${escapeHtml(r.pitcher_name || "")}</a>
           <span class="watch-pitch">${escapeHtml(PITCH_LABELS[r.pitch_type] || r.pitch_type)} (${formatScore(r.score)})</span>
         </div>
         ${meta ? `<div class="watch-meta">${meta}</div>` : ""}
@@ -314,20 +325,26 @@ async function fetchLastUpdated() {
 }
 
 function renderCard(pitchType, rows) {
+  // Each row's name links straight to that pitcher's own profile, so the
+  // card as a whole can no longer be a single <a> wrapping everything
+  // (nested links aren't valid HTML/reliable across browsers) -- it's a
+  // plain container now, with its own title link and footer link to the
+  // full pitch-type leaderboard alongside the per-row profile links.
   const items = rows.map((r, i) => `
     <li>
       <span class="home-rank">${i + 1}</span>
-      <span class="home-name">${escapeHtml(r.pitcher_name || "")}</span>
+      <a class="home-name" href="${playerProfileUrl(r.player_id, r.pitcher_name)}">${escapeHtml(r.pitcher_name || "")}</a>
       <span class="home-value">${formatScore(r.score)}</span>
     </li>
   `).join("");
+  const leaderboardHref = `leaderboard.html?pitch=${encodeURIComponent(pitchType)}`;
 
   return `
-    <a class="pitch-card" href="leaderboard.html?pitch=${encodeURIComponent(pitchType)}">
-      <h3>${escapeHtml(PITCH_LABELS[pitchType] || pitchType)}</h3>
+    <div class="pitch-card">
+      <a class="pitch-card-title" href="${leaderboardHref}"><h3>${escapeHtml(PITCH_LABELS[pitchType] || pitchType)}</h3></a>
       <ol class="home-list">${items || "<li class=\"home-empty\">No qualifying pitchers yet</li>"}</ol>
-      <span class="pitch-card-link">See full leaderboard &rarr;</span>
-    </a>
+      <a class="pitch-card-link" href="${leaderboardHref}">See full leaderboard &rarr;</a>
+    </div>
   `;
 }
 
