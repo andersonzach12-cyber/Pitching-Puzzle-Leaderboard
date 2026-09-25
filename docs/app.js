@@ -1,19 +1,21 @@
-// uScore leaderboard front end.
+// uScore+ leaderboard front end.
 //
 // Two views, both driven straight off Supabase (no build step, no pipeline
 // changes needed for anything in this file):
 //   - Leaderboard view: every qualifying pitcher for one Statcast pitch
-//     type, ranked by uScore quotient. Click a row to expand a detail panel
-//     with that pitch's raw characteristics and a movement-profile chart
-//     (horizontal break vs. induced vertical break) plotted against every
-//     other pitcher's dot for that same pitch type.
+//     type, ranked by uScore+ (its underlying quotient). Click a row to
+//     expand a detail panel with that pitch's raw characteristics and a
+//     movement-profile chart (horizontal break vs. induced vertical break)
+//     plotted against every other pitcher's dot for that same pitch type.
 //   - Player view: search a pitcher's name to see every pitch type THEY
 //     throw, each with its own quotient and rank (e.g. "#12 of 187"),
 //     computed live against the full table -- not just whatever happened
 //     to be loaded on screen already.
 //
-// The composite "overall pitcher" uScore is still computed and stored by
+// The composite "overall pitcher" uScore+ is still computed and stored by
 // the pipeline every day; it's just not surfaced in this UI for now.
+// (Internally, the database and pipeline still use the shorter "uscore"
+// name for columns/variables -- "uScore+" is purely the display name.)
 
 const { createClient } = supabase;
 const client = createClient(window.USCORE_CONFIG.SUPABASE_URL, window.USCORE_CONFIG.SUPABASE_ANON_KEY);
@@ -263,7 +265,7 @@ function buildDetailPanel(row, cloud, pitchType, { showProfileLink = false } = {
           <dt>Active spin</dt><dd>${row.active_spin_pct == null ? "n/a" : formatStat(row.active_spin_pct, 1, "%")}</dd>
           <dt>Usage</dt><dd>${formatPercent(row.usage_rate)}</dd>
           <dt>Delivery modifier</dt><dd title="How unusual this pitcher's release point is league-wide -- 1.00 is a perfectly average delivery">${formatStat(row.delivery_modifier, 2, "&times;")}</dd>
-          <dt title="100 = league average for this pitch type; higher = more unique">uScore</dt><dd>${formatScore(row.value != null ? row.value : row.display_score)}</dd>
+          <dt title="100 = league average for this pitch type; higher = more unique">uScore+</dt><dd>${formatScore(row.value != null ? row.value : row.display_score)}</dd>
         </dl>
         ${profileLink}
       </div>
@@ -296,7 +298,7 @@ function renderLeaderboard() {
     <tr>
       <th>#</th>
       <th>Pitcher</th>
-      <th class="sortable" id="sort-quotient" title="100 = league average for this pitch type. Reflects how far this pitch's velocity, movement, spin, and active spin deviate from average, weighted by how often it's thrown -- higher means more unique.">uScore${arrow("value")}</th>
+      <th class="sortable" id="sort-quotient" title="100 = league average for this pitch type. Reflects how far this pitch's velocity, movement, spin, and active spin deviate from average, weighted by how often it's thrown -- higher means more unique.">uScore+${arrow("value")}</th>
       <th class="sortable" id="sort-usage" title="Share of this pitcher's tracked pitches this season that were this pitch type">Usage${arrow("usage_rate")}</th>
     </tr>
   `;
@@ -341,7 +343,7 @@ function renderLeaderboard() {
 // the page stays fast and the table stays a manageable length -- but capping
 // at, say, 250 out of a pitch type with 700+ qualifying pitchers means only
 // the top slice (all comfortably above the 100 average) is ever visible,
-// which reads as if uScore skews high when it's really just showing the
+// which reads as if uScore+ skews high when it's really just showing the
 // best of the best. This footer makes the cap visible and gives a way past
 // it, so the full, honest distribution -- including everything below 100 --
 // is always one click away.
@@ -454,7 +456,7 @@ function renderPlayerView() {
   head.innerHTML = `
     <tr>
       <th>Pitch</th>
-      <th title="100 = league average for this pitch type; higher = more unique">uScore</th>
+      <th title="100 = league average for this pitch type; higher = more unique">uScore+</th>
       <th>Rank</th>
       <th title="Share of this pitcher's tracked pitches this season that were this pitch type">Usage</th>
     </tr>
