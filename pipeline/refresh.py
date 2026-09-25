@@ -42,7 +42,7 @@ import sys
 import math
 import time
 import traceback
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from io import StringIO
 
 import numpy as np
@@ -56,6 +56,12 @@ from supabase import create_client
 
 SEASON = int(os.environ.get("USCORE_SEASON", datetime.now().year))
 MIN_PITCHES = int(os.environ.get("USCORE_MIN_PITCHES", 25))  # per pitch type, to filter out tiny samples
+
+# How many days of score_snapshots history to keep around. Only needs to be
+# a bit more than the movers-box comparison window (currently 7 days, see
+# home.js's fetchMovers) so a missed-refresh gap day doesn't leave the home
+# page with nothing to compare against -- the rest is just bloat.
+SNAPSHOT_RETENTION_DAYS = int(os.environ.get("USCORE_SNAPSHOT_RETENTION_DAYS", 35))
 
 # Savant's "player_type": "pitcher" filter means "whoever was on the mound
 # for this pitch" -- it has no concept of a player's primary position, so a
@@ -1069,6 +1075,40 @@ def run():
 
         upsert_in_batches(supabase.table("pitchers"), pitchers_rows)
         upsert_in_batches(supabase.table("pitch_metrics"), pitch_rows, on_conflict="player_id,season,pitch_type")
+
+        # One row per (pitcher, pitch type) for TODAY, into score_snapshots --
+        # this is what lets a future refresh compare "now" against "~a week
+        # ago" instead of only ever knowing the immediately-previous run's
+        # value (which is what prev_quotient/prev_display_score above still
+        # capture, and which the home page's movers boxes used to rely on).
+        # Late in a season, day-over-day barely moves (one more start is a
+        # tiny fraction of a whole season's accumulated pitches), so the home
+        # page switched to comparing against this table's ~7-day-old rows
+        # instead -- see home.js's fetchMovers. Upserting on
+        # (player_id, season, pitch_type, snapshot_date) means re-running the
+        # pipeline more than once on the same day just updates today's row
+        # rather than piling up duplicates.
+        snapshot_date = datetime.now(timezone.utc).date().isoformat()
+        snapshot_rows = [
+            {
+                "player_id": r["player_id"],
+                "season": r["season"],
+                "pitch_type": r["pitch_type"],
+                "display_score": r["display_score"],
+                "snapshot_date": snapshot_date,
+            }
+            for r in pitch_rows
+        ]
+        upsert_in_batches(
+            supabase.table("score_snapshots"), snapshot_rows,
+            on_conflict="player_id,season,pitch_type,snapshot_date",
+        )
+
+        # Trim old snapshots so this table doesn't grow forever -- only a
+        # bit more history than the movers boxes actually compare against is
+        # kept (see SNAPSHOT_RETENTION_DAYS above).
+        snapshot_cutoff = (datetime.now(timezone.utc).date() - timedelta(days=SNAPSHOT_RETENTION_DAYS)).isoformat()
+        supabase.table("score_snapshots").delete().lt("snapshot_date", snapshot_cutoff).execute()
 
         # upsert only adds/updates rows -- it never removes ones that
         # shouldn't be there anymore (e.g. a pitcher who qualified in a
