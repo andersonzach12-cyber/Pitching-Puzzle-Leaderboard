@@ -537,6 +537,35 @@ tbody tr.data-row.expanded {
   background: var(--accent-bg);
 }
 
+.leaderboard-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  padding: 0.75rem 0.25rem;
+}
+
+.leaderboard-footer-note {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.leaderboard-footer button {
+  background: none;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 0.35rem 0.7rem;
+  font-size: 0.85rem;
+  color: var(--accent);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.leaderboard-footer button:hover {
+  background: var(--accent-bg);
+}
+
 td.rank {
   color: var(--muted);
   font-variant-numeric: tabular-nums;
