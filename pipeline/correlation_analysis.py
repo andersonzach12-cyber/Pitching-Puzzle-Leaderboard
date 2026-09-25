@@ -140,6 +140,14 @@ def compute_outcome_metrics(events: pd.DataFrame) -> pd.DataFrame:
     out_of_zone = zone.between(11, 14)  # explicit membership, not just "~in_zone", so a missing/
                                         # unrecognized zone code doesn't get miscounted either way
 
+    # De-fragment before adding several new columns one at a time -- df has
+    # 700,000+ rows and 119 columns by this point (a season's worth of raw
+    # Statcast pitches), and inserting columns individually into a frame
+    # that size is what pandas' "highly fragmented" warning was flagging.
+    # Harmless, just noisy and slightly wasteful; a plain .copy() re-lays it
+    # out contiguously in one shot.
+    df = df.copy()
+
     df["is_swing"] = df["description"].isin(swing_descriptions)
     df["is_whiff"] = df["description"].isin(whiff_descriptions)
     df["is_out_of_zone"] = out_of_zone
@@ -173,20 +181,42 @@ def fetch_quotients() -> pd.DataFrame:
     """This season's quotient/display_score for every qualifying
     (player_id, pitch_type), straight from Supabase -- the exact same
     numbers currently live on the site, so this correlates against what
-    people are actually seeing rather than a fresh recomputation."""
+    people are actually seeing rather than a fresh recomputation.
+
+    Paginated explicitly with .range() rather than one unbounded .select():
+    PostgREST (what Supabase's API runs on) caps a single response at a
+    default row limit regardless of how many rows actually match the query,
+    silently truncating rather than erroring. A single-page fetch happened
+    to land mid-table and cut off almost every Splitter/Knuckle-Curve/
+    Slider/Sweeper/Slurve row (whatever pitch types' rows simply weren't
+    written yet by the time the cutoff hit) while leaving earlier pitch
+    types looking mostly fine -- exactly the kind of silent, uneven data
+    loss that's easy to miss without comparing against an independent row
+    count."""
     supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
-    rows = (
-        supabase.table("pitch_metrics")
-        .select("player_id, pitch_type, quotient, display_score")
-        .eq("season", SEASON)
-        .execute()
-        .data
-    )
-    if not rows:
+    page_size = 1000
+    all_rows: list[dict] = []
+    start = 0
+    while True:
+        page = (
+            supabase.table("pitch_metrics")
+            .select("player_id, pitch_type, quotient, display_score")
+            .eq("season", SEASON)
+            .range(start, start + page_size - 1)
+            .execute()
+            .data
+        )
+        if not page:
+            break
+        all_rows.extend(page)
+        if len(page) < page_size:
+            break  # a partial page means this was the last one
+        start += page_size
+    if not all_rows:
         raise RuntimeError(
             f"No pitch_metrics rows found for season {SEASON} -- has the daily refresh run yet?"
         )
-    return pd.DataFrame(rows)
+    return pd.DataFrame(all_rows)
 
 
 # quotient and display_score are a monotonic transform of each other
