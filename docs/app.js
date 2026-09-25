@@ -49,7 +49,14 @@ async function fetchPitchTypeLeaderboard(pitchType) {
     .from("pitch_metrics")
     .select("player_id, display_score, usage_rate, velo, ivb_in, horizontal_in, spin_rpm, active_spin_pct, delivery_modifier, pitchers(pitcher_name)")
     .eq("pitch_type", pitchType)
-    .order("display_score", { ascending: false })
+    .not("display_score", "is", null)
+    // Postgres sorts NULLs FIRST by default on a descending order, so
+    // without this any row still missing a display_score would bubble to
+    // the TOP of the leaderboard as a blank "-" and bury real, ranked
+    // scores below it. The .not() filter above already excludes nulls
+    // entirely; nullsFirst: false is a second, independent guard against
+    // the same failure mode.
+    .order("display_score", { ascending: false, nullsFirst: false })
     .limit(250);
   if (error) throw error;
   return data.map((r) => ({
