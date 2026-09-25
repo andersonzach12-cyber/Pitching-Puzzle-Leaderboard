@@ -37,7 +37,15 @@ async function fetchTopN(pitchType) {
     .from("pitch_metrics")
     .select("display_score, pitchers(pitcher_name)")
     .eq("pitch_type", pitchType)
-    .order("display_score", { ascending: false })
+    .not("display_score", "is", null)
+    // Postgres sorts NULLs FIRST by default on a descending order, so
+    // without this any row still missing a display_score (e.g. mid-migration,
+    // or a future data hiccup for one pitcher) would bubble to the TOP of
+    // the list as a blank "-" and bury real, ranked scores below it. The
+    // .not() filter above already excludes nulls entirely, but nullsFirst:
+    // false is kept as a second, independent guard against the same failure
+    // mode -- belt and suspenders.
+    .order("display_score", { ascending: false, nullsFirst: false })
     .limit(TOP_N);
   if (error) throw error;
   return data.map((r) => ({
