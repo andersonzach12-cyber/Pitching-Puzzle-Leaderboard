@@ -61,25 +61,69 @@ function formatDelta(v) {
   return sign + String(rounded);
 }
 
-// Every pitch-type row that has a prev_display_score (i.e. has been through
-// at least two refreshes), with the day-over-day delta computed client-side
-// in display_score's 100-average units -- simplest way to sort/slice into
-// gainers vs. decliners without needing a generated column or a second
-// round-trip per pitch type.
+// display_score/quotient are season-to-date cumulative averages, so late in
+// a season one more day's pitches barely move the number -- a plain
+// day-over-day comparison (the old approach, using prev_display_score)
+// naturally flattens out to almost nothing once pitchers have a big enough
+// season sample banked. A full week's worth of new pitches is a bigger
+// share of that total, so this compares against score_snapshots' ~7-day-old
+// row instead of yesterday's, to surface real movement again.
+const MOVERS_WINDOW_DAYS = 7;
+
+// Local calendar date N days back, as YYYY-MM-DD -- same convention as
+// todayDateString() below, just parameterized.
+function daysAgoDateString(days) {
+  const d = new Date();
+  d.setDate(d.getDate() - days);
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+}
+
 async function fetchMovers() {
-  const { data, error } = await client
-    .from("pitch_metrics")
-    .select("pitch_type, display_score, prev_display_score, pitchers(pitcher_name)")
-    .not("prev_display_score", "is", null)
-    .limit(5000);
-  if (error) throw error;
-  const withDelta = data
-    .map((r) => ({
-      pitcher_name: r.pitchers ? r.pitchers.pitcher_name : "(unknown)",
-      pitch_type: r.pitch_type,
-      delta: r.display_score - r.prev_display_score,
-    }))
-    .filter((r) => !Number.isNaN(r.delta));
+  const cutoff = daysAgoDateString(MOVERS_WINDOW_DAYS);
+  const [{ data: current, error: currentError }, { data: snapshots, error: snapshotError }] = await Promise.all([
+    client
+      .from("pitch_metrics")
+      .select("player_id, pitch_type, display_score, pitchers(pitcher_name)")
+      .not("display_score", "is", null)
+      .limit(5000),
+    // Every snapshot AT LEAST a week old, newest first -- reduced below to
+    // the single closest-to-a-week-back row per (player_id, pitch_type).
+    // Ordering by snapshot_date desc means the first one seen per pitcher is
+    // the freshest one that still qualifies as "old enough", which tolerates
+    // an occasional missed-refresh day without losing the comparison
+    // entirely (it just compares against 8 or 9 days back instead of 7).
+    client
+      .from("score_snapshots")
+      .select("player_id, pitch_type, display_score, snapshot_date")
+      .lte("snapshot_date", cutoff)
+      .order("snapshot_date", { ascending: false })
+      .limit(20000),
+  ]);
+  if (currentError) throw currentError;
+  if (snapshotError) throw snapshotError;
+
+  const snapshotByKey = new Map();
+  for (const s of snapshots) {
+    if (s.display_score === null || s.display_score === undefined) continue;
+    const key = `${s.player_id}|${s.pitch_type}`;
+    if (!snapshotByKey.has(key)) snapshotByKey.set(key, s.display_score);
+  }
+
+  const withDelta = current
+    .map((r) => {
+      const prevScore = snapshotByKey.get(`${r.player_id}|${r.pitch_type}`);
+      if (prevScore === undefined) return null; // no snapshot old enough yet for this pitcher/pitch
+      return {
+        pitcher_name: r.pitchers ? r.pitchers.pitcher_name : "(unknown)",
+        pitch_type: r.pitch_type,
+        delta: r.display_score - prevScore,
+      };
+    })
+    .filter((r) => r && !Number.isNaN(r.delta));
+
   const gainers = [...withDelta].sort((a, b) => b.delta - a.delta).slice(0, 5);
   const decliners = [...withDelta].sort((a, b) => a.delta - b.delta).slice(0, 5);
   return { gainers, decliners };
@@ -306,8 +350,8 @@ async function loadHome() {
     ]);
     grid.innerHTML = pitchResults.map(({ pt, rows }) => renderCard(pt, rows)).join("");
     moversRow.innerHTML =
-      renderMoverBox("Yesterday's Biggest Gainers", movers.gainers, "mover-up") +
-      renderMoverBox("Yesterday's Biggest Decliners", movers.decliners, "mover-down") +
+      renderMoverBox("Past Week's Biggest Gainers", movers.gainers, "mover-up") +
+      renderMoverBox("Past Week's Biggest Decliners", movers.decliners, "mover-down") +
       renderWatchBox(watchList);
     status.textContent = "";
   } catch (err) {
