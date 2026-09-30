@@ -32,6 +32,20 @@ function escapeHtml(s) {
   return div.innerHTML;
 }
 
+// The DB stores names straight from Baseball Savant as "Last, First" (and
+// "Last Jr., First" etc.) -- this flips that to the "First Last" form
+// people actually expect to read. Names with no comma (or a malformed one)
+// are returned unchanged rather than mangled.
+function formatPitcherName(name) {
+  if (!name) return name;
+  const idx = name.indexOf(",");
+  if (idx === -1) return name;
+  const last = name.slice(0, idx).trim();
+  const first = name.slice(idx + 1).trim();
+  if (!last || !first) return name;
+  return `${first} ${last}`;
+}
+
 // Every pitcher name on the home page (top-10 cards, movers boxes, watch
 // list) links here rather than just being plain text -- same destination
 // the top-right search box sends you to.
@@ -58,7 +72,7 @@ async function fetchTopN(pitchType) {
   if (error) throw error;
   return data.map((r) => ({
     player_id: r.player_id,
-    pitcher_name: r.pitchers ? r.pitchers.pitcher_name : "(unknown)",
+    pitcher_name: formatPitcherName(r.pitchers ? r.pitchers.pitcher_name : "(unknown)"),
     score: r.display_score,
   }));
 }
@@ -127,7 +141,7 @@ async function fetchMovers() {
       if (prevScore === undefined) return null; // no snapshot old enough yet for this pitcher/pitch
       return {
         player_id: r.player_id,
-        pitcher_name: r.pitchers ? r.pitchers.pitcher_name : "(unknown)",
+        pitcher_name: formatPitcherName(r.pitchers ? r.pitchers.pitcher_name : "(unknown)"),
         pitch_type: r.pitch_type,
         delta: r.display_score - prevScore,
       };
@@ -212,7 +226,7 @@ async function fetchWatchList() {
       if (!best) return null; // no qualifying pitch data to rank this starter by
       return {
         player_id: s.player_id,
-        pitcher_name: s.pitchers ? s.pitchers.pitcher_name : "(unknown)",
+        pitcher_name: formatPitcherName(s.pitchers ? s.pitchers.pitcher_name : "(unknown)"),
         team: s.team,
         opponent: s.opponent,
         game_time: s.game_time,
@@ -264,7 +278,11 @@ async function searchPitchers(query) {
     .order("pitcher_name")
     .limit(8);
   if (error) throw error;
-  return data;
+  // The DB stores "Last, First" (straight from Baseball Savant); the search
+  // itself and the alphabetical .order() above stay on that raw form (so
+  // it's still sorted by last name), but everything shown to a person uses
+  // the "First Last" display form.
+  return data.map((p) => ({ ...p, pitcher_name: formatPitcherName(p.pitcher_name) }));
 }
 
 function goToPlayer(playerId, pitcherName) {
