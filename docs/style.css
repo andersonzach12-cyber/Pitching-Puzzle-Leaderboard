@@ -514,6 +514,35 @@ main.home-page {
   font-variant-numeric: tabular-nums;
 }
 
+.table-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 0.5rem;
+}
+
+.table-toolbar button {
+  background: none;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 0.35rem 0.7rem;
+  font-size: 0.85rem;
+  color: var(--accent);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.table-toolbar button:hover {
+  background: var(--accent-bg);
+}
+
+/* Lets the table scroll horizontally on narrow screens once the pitch-metric
+   columns are expanded into view, instead of squeezing every column or
+   breaking the page layout. */
+.table-scroll {
+  overflow-x: auto;
+  border-radius: 8px;
+}
+
 table {
   width: 100%;
   border-collapse: collapse;
@@ -601,6 +630,14 @@ td.rank {
 td.value {
   font-variant-numeric: tabular-nums;
   font-weight: 600;
+}
+
+/* The expanded raw-characteristic columns (velo, IVB, horiz, active spin%)
+   sit next to uScore+ but shouldn't compete with it visually -- lighter
+   weight and muted color keeps uScore+ as the obvious primary number. */
+td.value.metric {
+  font-weight: 400;
+  color: var(--muted);
 }
 
 /* Quick-scan color tiers for the quotient column -- darker/stronger accent
