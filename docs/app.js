@@ -1,4 +1,4 @@
-// uScore+ leaderboard front end.
+uScore+ leaderboard front end.
 //
 // Two views, both driven straight off Supabase (no build step, no pipeline
 // changes needed for anything in this file):
@@ -87,9 +87,16 @@ async function fetchPitchTypeLeaderboard(pitchType, { limit = LEADERBOARD_LIMIT 
   if (limit != null) query = query.limit(limit);
   const { data, error } = await query;
   if (error) throw error;
-  return data.map((r) => ({
+  // The query above already orders by display_score (uScore+) descending,
+  // so each row's position in this array IS its true uScore+ rank for this
+  // pitch type -- captured here, once, as uscore_rank, so the "#" column can
+  // keep showing it even after the table is re-sorted by a different column
+  // client-side (sortedRows() reorders the array but never touches this
+  // field).
+  return data.map((r, i) => ({
     player_id: r.player_id,
-    pitcher_name: r.pitchers ? r.pitchers.pitcher_name : "(unknown)",
+    pitcher_name: formatPitcherName(r.pitchers ? r.pitchers.pitcher_name : "(unknown)"),
+    uscore_rank: i + 1,
     value: r.display_score,
     usage_rate: r.usage_rate,
     velo: r.velo,
@@ -128,7 +135,11 @@ async function searchPitchers(query) {
     .order("pitcher_name")
     .limit(8);
   if (error) throw error;
-  return data;
+  // The DB stores "Last, First" (straight from Baseball Savant); the search
+  // itself and the alphabetical .order() above stay on that raw form (so
+  // it's still sorted by last name), but everything shown to a person uses
+  // the "First Last" display form.
+  return data.map((p) => ({ ...p, pitcher_name: formatPitcherName(p.pitcher_name) }));
 }
 
 async function getRank(pitchType, quotient) {
@@ -195,6 +206,20 @@ function escapeHtml(s) {
   const div = document.createElement("div");
   div.textContent = s;
   return div.innerHTML;
+}
+
+// The DB stores names straight from Baseball Savant as "Last, First" (and
+// "Last Jr., First" etc.) -- this flips that to the "First Last" form
+// people actually expect to read. Names with no comma (or a malformed one)
+// are returned unchanged rather than mangled.
+function formatPitcherName(name) {
+  if (!name) return name;
+  const idx = name.indexOf(",");
+  if (idx === -1) return name;
+  const last = name.slice(0, idx).trim();
+  const first = name.slice(idx + 1).trim();
+  if (!last || !first) return name;
+  return `${first} ${last}`;
 }
 
 function mean(values) {
@@ -341,7 +366,7 @@ function renderLeaderboard() {
 
   head.innerHTML = `
     <tr>
-      <th>#</th>
+      <th title="This pitcher's uScore+ rank for this pitch type -- stays fixed when you sort by a different column">#</th>
       <th>Pitcher</th>
       ${columns.map((c) => `<th class="sortable" data-field="${c.field}" title="${escapeHtml(c.title)}">${escapeHtml(c.label)}${arrow(c.field)}</th>`).join("")}
     </tr>
@@ -359,7 +384,7 @@ function renderLeaderboard() {
       return `<td class="${cls}">${c.format(r[c.field])}</td>`;
     }).join("");
     tr.innerHTML = `
-      <td class="rank">${i + 1}</td>
+      <td class="rank">${r.uscore_rank}</td>
       <td>${escapeHtml(r.pitcher_name || "")}</td>
       ${cells}
     `;
