@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>uScore+ Leaderboard</title>
   <meta name="description" content="Pitch-by-pitch uniqueness leaderboard for MLB pitchers." />
-  <link rel="stylesheet" href="style.css?v=4" />
+  <link rel="stylesheet" href="style.css?v=5" />
 </head>
 <body>
   <header class="page-header">
@@ -41,6 +41,10 @@
 
     <div id="league-strip" class="league-strip" hidden></div>
 
+    <div class="table-toolbar">
+      <button type="button" id="toggle-metrics-btn">Show pitch metrics</button>
+    </div>
+
     <div id="status" class="status" role="status"></div>
 
     <div id="player-header" class="player-header" hidden>
@@ -48,10 +52,12 @@
       <button id="back-to-leaderboard" type="button">&larr; Back to leaderboard</button>
     </div>
 
-    <table id="leaderboard">
-      <thead id="leaderboard-head"></thead>
-      <tbody id="leaderboard-body"></tbody>
-    </table>
+    <div class="table-scroll">
+      <table id="leaderboard">
+        <thead id="leaderboard-head"></thead>
+        <tbody id="leaderboard-body"></tbody>
+      </table>
+    </div>
 
     <div id="leaderboard-footer" class="leaderboard-footer"></div>
 
@@ -76,6 +82,6 @@
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
   <script src="config.js"></script>
-  <script src="app.js?v=7"></script>
+  <script src="app.js?v=8"></script>
 </body>
 </html>
