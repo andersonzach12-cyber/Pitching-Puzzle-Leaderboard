@@ -505,9 +505,12 @@ def compute_pitch_metrics_from_events(events: pd.DataFrame) -> tuple[pd.DataFram
 def fetch_active_spin() -> pd.DataFrame:
     """Active-spin% by pitcher and pitch type, from Savant's active-spin
     leaderboard. Returns columns: player_id, pitch_type, active_spin_pct.
-    Savant only publishes this for FF/SI/FC/CH/CU/SL/ST/SV -- other pitch
-    types simply won't have a row here, which is expected (handled below by
-    treating missing = None, not 0)."""
+    Savant publishes this for FF/SI/FC/CH/FS/CU/SL/ST/SV -- FO/KC/CS simply
+    won't have a row here, which is expected (handled below by treating
+    missing = None, not 0). (Splitter was previously believed unavailable --
+    confirmed via a real Savant export on 2026-09-30 that active_spin_splitter
+    is a real column with a usable sample size, ~115 of ~700 pitchers that
+    season.)"""
     url = f"https://baseballsavant.mlb.com/leaderboard/active-spin?year={SEASON}&csv=true"
     resp = get_with_retries(url, timeout=30)
     raw = pd.read_csv(StringIO(resp.text))
@@ -522,6 +525,7 @@ def fetch_active_spin() -> pd.DataFrame:
         "sinker": "SI", "si": "SI",
         "cutter": "FC", "fc": "FC",
         "changeup": "CH", "ch": "CH",
+        "splitter": "FS", "split": "FS", "fs": "FS",
         "curve": "CU", "curveball": "CU", "cu": "CU",
         "slider": "SL", "sl": "SL",
         "sweeper": "ST", "st": "ST",
