@@ -29,11 +29,28 @@ const PITCH_LABELS = {
 
 const LEADERBOARD_LIMIT = 250;
 
+// Sortable columns on the per-pitch-type leaderboard table. uScore+ (field
+// "value") is first and is the default sort. "base: true" columns are always
+// shown; the rest (the raw characteristics) are hidden behind the "Show
+// pitch metrics" toggle so the default table stays uncluttered, but once
+// expanded they're sortable just like uScore+ and Usage -- a way to see how
+// uScore+'s ranking compares to sorting straight on velocity/movement/spin.
+const LEADERBOARD_COLUMNS = [
+  { field: "value", label: "uScore+", base: true, title: "100 = league average for this pitch type. Reflects how far this pitch's velocity, movement, spin, and active spin deviate from average, weighted by how often it's thrown -- higher means more unique.", format: (v) => formatScore(v) },
+  { field: "usage_rate", label: "Usage", base: true, title: "Share of this pitcher's tracked pitches this season that were this pitch type", format: (v) => formatPercent(v) },
+  { field: "velo", label: "Velo", base: false, title: "Velocity", format: (v) => formatStat(v, 1, " mph") },
+  { field: "ivb_in", label: "IVB", base: false, title: "Induced vertical break", format: (v) => formatStat(v, 1, "\"") },
+  { field: "horizontal_in", label: "Horiz", base: false, title: "Horizontal break; positive = arm-side, negative = glove-side", format: (v) => formatStat(v, 1, "\"") },
+  { field: "active_spin_pct", label: "Active Spin%", base: false, title: "Share of total spin rate that actually contributes to movement", format: (v) => formatStat(v, 1, "%") },
+];
+
 const state = {
   view: "leaderboard", // "leaderboard" | "player"
   pitchType: "FF",
   rows: [],            // current leaderboard rows (extended with raw metrics)
-  sortField: "value",   // "value" | "usage_rate"
+  sortField: "value",   // any LEADERBOARD_COLUMNS field
+  sortDir: "desc",       // "desc" | "asc"
+  showMetrics: false,    // whether the raw-characteristic columns are expanded into view
   expandedKey: null,    // player_id (leaderboard) or pitch_type (player view) currently expanded
   playerId: null,
   playerName: "",
@@ -278,42 +295,73 @@ function buildDetailPanel(row, cloud, pitchType, { showProfileLink = false } = {
 // Leaderboard view
 // --------------------------------------------------------------------------
 
+function visibleColumns() {
+  return state.showMetrics ? LEADERBOARD_COLUMNS : LEADERBOARD_COLUMNS.filter((c) => c.base);
+}
+
 function sortedRows() {
   const field = state.sortField;
-  return [...state.rows].sort((a, b) => {
-    const av = a[field] == null ? -Infinity : a[field];
-    const bv = b[field] == null ? -Infinity : b[field];
-    return bv - av;
-  });
+  const dir = state.sortDir === "asc" ? 1 : -1;
+  // Nulls always sort to the bottom of the table regardless of direction --
+  // "unknown" shouldn't read as "highest" just because ascending flips the
+  // comparator.
+  const withValue = state.rows.filter((r) => r[field] != null);
+  const withoutValue = state.rows.filter((r) => r[field] == null);
+  withValue.sort((a, b) => (a[field] - b[field]) * dir);
+  return [...withValue, ...withoutValue];
+}
+
+function setSort(field) {
+  if (state.sortField === field) {
+    state.sortDir = state.sortDir === "desc" ? "asc" : "desc";
+  } else {
+    state.sortField = field;
+    state.sortDir = "desc";
+  }
+  renderLeaderboard();
 }
 
 function renderLeaderboard() {
   const head = document.getElementById("leaderboard-head");
   const body = document.getElementById("leaderboard-body");
+  const columns = visibleColumns();
   const rows = sortedRows();
   const allValues = state.rows.map((r) => r.value);
 
-  const arrow = (field) => (state.sortField === field ? " <span class=\"sort-arrow\">&#9660;</span>" : "");
+  const arrow = (field) => {
+    if (state.sortField !== field) return "";
+    const glyph = state.sortDir === "asc" ? "&#9650;" : "&#9660;";
+    return ` <span class="sort-arrow">${glyph}</span>`;
+  };
+
+  const metricsBtn = document.getElementById("toggle-metrics-btn");
+  if (metricsBtn) {
+    metricsBtn.textContent = state.showMetrics ? "Hide pitch metrics" : "Show pitch metrics";
+  }
+
   head.innerHTML = `
     <tr>
       <th>#</th>
       <th>Pitcher</th>
-      <th class="sortable" id="sort-quotient" title="100 = league average for this pitch type. Reflects how far this pitch's velocity, movement, spin, and active spin deviate from average, weighted by how often it's thrown -- higher means more unique.">uScore+${arrow("value")}</th>
-      <th class="sortable" id="sort-usage" title="Share of this pitcher's tracked pitches this season that were this pitch type">Usage${arrow("usage_rate")}</th>
+      ${columns.map((c) => `<th class="sortable" data-field="${c.field}" title="${escapeHtml(c.title)}">${escapeHtml(c.label)}${arrow(c.field)}</th>`).join("")}
     </tr>
   `;
-  document.getElementById("sort-quotient").addEventListener("click", () => { state.sortField = "value"; renderLeaderboard(); });
-  document.getElementById("sort-usage").addEventListener("click", () => { state.sortField = "usage_rate"; renderLeaderboard(); });
+  head.querySelectorAll("th.sortable").forEach((th) => {
+    th.addEventListener("click", () => setSort(th.dataset.field));
+  });
 
   body.innerHTML = "";
   rows.forEach((r, i) => {
     const tr = document.createElement("tr");
     tr.className = "data-row" + (state.expandedKey === r.player_id ? " expanded" : "");
+    const cells = columns.map((c) => {
+      const cls = c.field === "value" ? `value ${tierClass(r.value, allValues)}` : c.base ? "value" : "value metric";
+      return `<td class="${cls}">${c.format(r[c.field])}</td>`;
+    }).join("");
     tr.innerHTML = `
       <td class="rank">${i + 1}</td>
       <td>${escapeHtml(r.pitcher_name || "")}</td>
-      <td class="value ${tierClass(r.value, allValues)}">${formatScore(r.value)}</td>
-      <td class="value">${formatPercent(r.usage_rate)}</td>
+      ${cells}
     `;
     tr.addEventListener("click", () => toggleLeaderboardDetail(r.player_id));
     body.appendChild(tr);
@@ -322,7 +370,7 @@ function renderLeaderboard() {
       const detailTr = document.createElement("tr");
       detailTr.className = "detail-row";
       const td = document.createElement("td");
-      td.colSpan = 4;
+      td.colSpan = columns.length + 2;
       td.innerHTML = buildDetailPanel(r, state.rows, state.pitchType, { showProfileLink: true });
       const profileBtn = td.querySelector(".view-profile-btn");
       if (profileBtn) {
@@ -337,6 +385,22 @@ function renderLeaderboard() {
   });
 
   renderLeaderboardFooter();
+}
+
+function toggleMetricsColumns() {
+  state.showMetrics = !state.showMetrics;
+  // If the table was sorted on a metric column that's about to be hidden,
+  // fall back to the uScore+ default rather than leaving an invisible sort
+  // field in place (confusing: row order would keep changing with no
+  // visible column to explain why).
+  if (!state.showMetrics) {
+    const stillVisible = LEADERBOARD_COLUMNS.some((c) => c.base && c.field === state.sortField);
+    if (!stillVisible) {
+      state.sortField = "value";
+      state.sortDir = "desc";
+    }
+  }
+  renderLeaderboard();
 }
 
 // Below the table: by default the leaderboard caps at LEADERBOARD_LIMIT so
@@ -450,6 +514,7 @@ function renderPlayerView() {
   document.getElementById("player-header").hidden = false;
   document.getElementById("player-name").textContent = state.playerName;
   document.getElementById("league-strip").hidden = true;
+  document.querySelector(".table-toolbar").hidden = true;
 
   const head = document.getElementById("leaderboard-head");
   const body = document.getElementById("leaderboard-body");
@@ -539,6 +604,7 @@ function backToLeaderboard() {
   state.playerRows = [];
   document.getElementById("search").value = "";
   document.getElementById("player-header").hidden = true;
+  document.querySelector(".table-toolbar").hidden = false;
   renderLeaderboard();
   renderLeagueStrip();
 }
@@ -587,6 +653,8 @@ document.addEventListener("click", (e) => {
 });
 
 document.getElementById("back-to-leaderboard").addEventListener("click", backToLeaderboard);
+
+document.getElementById("toggle-metrics-btn").addEventListener("click", toggleMetricsColumns);
 
 document.getElementById("pitch-select").addEventListener("change", (e) => {
   state.pitchType = e.target.value;
