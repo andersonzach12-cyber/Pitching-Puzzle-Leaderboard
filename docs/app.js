@@ -1,4 +1,4 @@
-uScore+ leaderboard front end.
+//uScore+ leaderboard front end.
 //
 // Two views, both driven straight off Supabase (no build step, no pipeline
 // changes needed for anything in this file):
