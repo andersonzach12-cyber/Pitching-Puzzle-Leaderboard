@@ -237,20 +237,14 @@ body {
   color: var(--accent-strong);
 }
 
-/* Gainers / decliners / today's-starters boxes, centered as a row above the
+/* Biggest-movers / today's-starters boxes, centered as a row above the
    pitch-type grid. */
 .movers-row {
   display: grid;
-  grid-template-columns: repeat(3, minmax(230px, 340px));
+  grid-template-columns: repeat(2, minmax(230px, 340px));
   gap: 1rem;
   justify-content: center;
   margin: 0 auto 1.75rem;
-}
-
-@media (max-width: 900px) {
-  .movers-row {
-    grid-template-columns: repeat(2, minmax(230px, 340px));
-  }
 }
 
 .mover-box {
@@ -312,6 +306,12 @@ body {
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   flex: 0 0 auto;
+}
+
+.mover-arrow {
+  flex: 0 0 auto;
+  font-size: 0.7rem;
+  line-height: 1;
 }
 
 .mover-up {
