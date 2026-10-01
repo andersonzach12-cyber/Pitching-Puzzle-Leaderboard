@@ -80,6 +80,22 @@ SNAPSHOT_RETENTION_DAYS = int(os.environ.get("USCORE_SNAPSHOT_RETENTION_DAYS", 3
 # roster/position data from a different source.
 MIN_SEASON_PITCHES_TO_QUALIFY = int(os.environ.get("USCORE_MIN_SEASON_PITCHES", 100))
 
+# Minimum pitches of a given type in a SINGLE DAY to qualify for the home
+# page's "Yesterday's Best Pitches" box (2026-10 model review). Deliberately
+# far below MIN_PITCHES (25, a season-long bar) -- a single start or relief
+# outing rarely clears 25 of one secondary pitch, let alone 25 in one day.
+# The point of this floor is narrower: keep a single extreme reading (one
+# wild pitch out of a 3-pitch sample) from dominating the box. Bump this up
+# if live numbers still look too noisy with 6.
+DAILY_MIN_PITCHES = int(os.environ.get("USCORE_DAILY_MIN_PITCHES", 6))
+
+# How many days of daily_pitch_scores history to keep. The home page only
+# ever shows yesterday's, but a little headroom (same idea as
+# SNAPSHOT_RETENTION_DAYS) means a missed-refresh day doesn't leave nothing
+# to fall back on, and leaves room for a "yesterday" box to become a
+# short trailing-window box later without a schema change.
+DAILY_SCORE_RETENTION_DAYS = int(os.environ.get("USCORE_DAILY_SCORE_RETENTION_DAYS", 10))
+
 SUPABASE_URL = os.environ["SUPABASE_URL"]
 SUPABASE_SERVICE_KEY = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
 
@@ -519,11 +535,55 @@ def fetch_pitch_events() -> pd.DataFrame:
     return df
 
 
-def compute_pitch_metrics_from_events(events: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Aggregate raw pitch-level rows into (a) one row per pitcher per pitch
-    type with average velo/spin/movement/usage, and (b) one row per pitcher
-    with a usage-weighted average extension."""
-    df = normalize_player_id(events, "statcast_search")
+def fetch_yesterdays_pitch_events() -> pd.DataFrame:
+    """Every individual pitch thrown league-wide on a single day (yesterday,
+    server-local date) for the home page's "Yesterday's Best Pitches" box.
+    Reuses the same chunk-fetch helper as the season pull, since one day's
+    worth of pitches league-wide is always well under Savant's ~25,000-row
+    export cap -- no chunking needed.
+
+    Pulls a 3-day-wide window (the day before yesterday through today) and
+    then filters down to exactly yesterday's rows by the event-level
+    game_date column, rather than trusting game_date_gt/game_date_lt to be
+    exclusive or inclusive at the boundary -- the season fetch above gets
+    away with window math that assumes a particular boundary behavior
+    because small overlaps or gaps between MULTI-day chunks don't matter
+    (everything gets concatenated into one season-long dataframe either
+    way), but a single-day box is exactly the case where getting one extra
+    or missing day would be a visible, wrong answer, so this confirms the
+    actual date explicitly instead."""
+    yesterday = datetime.now().date() - timedelta(days=1)
+    window_start = yesterday - timedelta(days=1)
+    window_end = yesterday + timedelta(days=1)
+    df = _fetch_pitch_events_chunk(window_start.strftime("%Y-%m-%d"), window_end.strftime("%Y-%m-%d"))
+    if df.empty:
+        print(f"statcast_search (daily): no pitch data returned for {yesterday.isoformat()}")
+        return df
+    date_col = next((c for c in ("game_date", "game_date_utc") if c in df.columns), None)
+    if date_col is None:
+        print(f"WARNING: statcast_search (daily) export has no game_date column -- "
+              f"can't confirm the {len(df)} rows pulled are exactly {yesterday.isoformat()}; "
+              f"using them all as-is. Columns were: {list(df.columns)}")
+        return df
+    yesterday_str = yesterday.isoformat()
+    out = df[df[date_col].astype(str).str.startswith(yesterday_str)].copy()
+    print(f"statcast_search (daily): pulled {len(out)} pitch rows for {yesterday_str} "
+          f"(of {len(df)} in the wider fetch window).")
+    return out
+
+
+def _aggregate_pitch_events(events: pd.DataFrame, source_label: str) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Shared core behind both the season aggregation
+    (compute_pitch_metrics_from_events) and the single-day aggregation
+    (compute_daily_pitch_aggregates): Savant column resolution, handedness-
+    normalized horizontal break, and the groupby(player_id, pitch_type)
+    itself. Returns (grouped, extension); grouped has one row per
+    (player_id, pitch_type) with mean velo/spin_rpm/ivb_in/horizontal_in,
+    n_pitches, total_pitches, and usage_rate -- deliberately UNFILTERED by
+    any sample-size floor, since the season and daily callers each apply a
+    different one (MIN_PITCHES/MIN_SEASON_PITCHES_TO_QUALIFY vs.
+    DAILY_MIN_PITCHES)."""
+    df = normalize_player_id(events, source_label)
 
     def first_present(candidates: list[str]) -> str | None:
         return next((c for c in candidates if c in df.columns), None)
@@ -583,6 +643,24 @@ def compute_pitch_metrics_from_events(events: pd.DataFrame) -> tuple[pd.DataFram
 
     grouped = grouped.merge(per_pitcher_totals, on="player_id", how="left")
     grouped["usage_rate"] = grouped["n_pitches"] / grouped["total_pitches"]
+
+    ext = df.dropna(subset=["extension_ft"])
+    if ext.empty:
+        extension = pd.DataFrame(columns=["player_id", "extension_ft"])
+    else:
+        extension = ext.groupby("player_id")["extension_ft"].mean().reset_index()
+
+    return grouped, extension
+
+
+def compute_pitch_metrics_from_events(events: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Aggregate raw pitch-level rows into (a) one row per pitcher per pitch
+    type with average velo/spin/movement/usage, and (b) one row per pitcher
+    with a usage-weighted average extension. Season-long: filters out
+    position players (too few total pitches) and individual pitch types
+    thrown too rarely to trust (MIN_PITCHES)."""
+    grouped, extension = _aggregate_pitch_events(events, "statcast_search")
+
     n_before_position_player_filter = grouped["player_id"].nunique()
     grouped = grouped[grouped["total_pitches"] >= MIN_SEASON_PITCHES_TO_QUALIFY].copy()
     n_removed = n_before_position_player_filter - grouped["player_id"].nunique()
@@ -597,14 +675,20 @@ def compute_pitch_metrics_from_events(events: pd.DataFrame) -> tuple[pd.DataFram
         "player_id", "pitch_type", "velo", "spin_rpm", "ivb_in", "horizontal_in",
         "usage_rate", "active_spin_pct",
     ]]
-
-    ext = df.dropna(subset=["extension_ft"])
-    if ext.empty:
-        extension = pd.DataFrame(columns=["player_id", "extension_ft"])
-    else:
-        extension = ext.groupby("player_id")["extension_ft"].mean().reset_index()
-
     return pitch_metrics, extension
+
+
+def compute_daily_pitch_aggregates(events: pd.DataFrame) -> pd.DataFrame:
+    """One row per (player_id, pitch_type) for a single day's pitch events,
+    for the home page's "Yesterday's Best Pitches" box. Filtered only by
+    DAILY_MIN_PITCHES -- a single day's events obviously can't clear a
+    season-long total-pitches qualifier, and daily scoring deliberately
+    reuses the season's own usage_rate/delivery_modifier/fastball_baseline
+    rather than computing day-specific versions of those (see
+    compute_daily_display_scores), so none of that filtering applies here."""
+    grouped, _ = _aggregate_pitch_events(events, "statcast_search (daily)")
+    grouped = grouped[grouped["n_pitches"] >= DAILY_MIN_PITCHES].copy()
+    return grouped[["player_id", "pitch_type", "velo", "spin_rpm", "ivb_in", "horizontal_in", "n_pitches"]]
 
 
 # --------------------------------------------------------------------------
@@ -975,6 +1059,142 @@ def compute_pitch_quotients(pitch_metrics: pd.DataFrame, active_spin_fallback: p
     ]]
 
 
+def _season_pop_zscore(day_values: pd.Series, season_values: pd.Series) -> pd.Series:
+    """z-score a single day's raw values against the SEASON population's own
+    mean/std for that same metric and pitch type, rather than the day's own
+    (much smaller, noisier) cross-section -- so a daily score of "100"
+    keeps meaning the same thing as a season "100": average by the
+    season-established yardstick, not average-for-one-random-Tuesday."""
+    day_values = pd.to_numeric(day_values, errors="coerce")
+    season_values = pd.to_numeric(season_values, errors="coerce")
+    mean, std = season_values.mean(), season_values.std(ddof=0)
+    if not std or math.isnan(std):
+        return day_values.fillna(0) * 0.0
+    return (day_values - mean) / std
+
+
+def compute_daily_display_scores(daily_agg: pd.DataFrame, pitch_metrics: pd.DataFrame,
+                                   fastball_baseline: pd.DataFrame, game_date: str) -> pd.DataFrame:
+    """Rescore a single day's pitches (`daily_agg`, from
+    compute_daily_pitch_aggregates) onto the exact same uScore+ yardstick as
+    the season leaderboard, for the home page's "Yesterday's Best Pitches"
+    box (2026-10 design discussion). Mirrors compute_pitch_quotients'
+    shape/weight logic pitch-type by pitch-type, but:
+
+    - every z-score is taken against the SEASON population's mean/std for
+      that pitch type (via _season_pop_zscore), never the day's own tiny
+      cross-section -- a day might have only a handful of pitchers throwing
+      a given pitch type at all, nowhere near enough to self-calibrate a
+      meaningful distribution.
+    - usage_rate and delivery_modifier are borrowed from the SEASON
+      pitch_metrics row for that (player_id, pitch_type) rather than
+      computed fresh -- a single day's game plan or pitch count says little
+      about a pitcher's real mix or release, and there's no daily delivery
+      reading to compute from in the first place. A pitcher who threw this
+      pitch type yesterday but has no qualifying SEASON row for it (hasn't
+      cleared MIN_PITCHES/MIN_SEASON_PITCHES_TO_QUALIFY yet) is dropped --
+      there's no season yardstick to place them on.
+    - the changeup's fastball-gap terms (velocity and IVB) use the SEASON
+      fastball_baseline and are z-scored against the SEASON gap
+      distribution, for the same reason -- and for the same reason CH is
+      skipped here if `fastball_baseline` has no row for a given pitcher.
+    - active spin is excluded entirely -- Savant doesn't publish a daily
+      active-spin reading, and an empirical A/B run against this same
+      season formula with active spin zeroed out showed negligible impact
+      (Spearman rank-correlation 0.994-1.000 across pitch types, max
+      display-score shift 1-4 points, no pitcher moved 10+ points) -- so
+      this omission doesn't change what the resulting box represents in
+      any meaningful way.
+    - the final display score is rescaled against the SEASON quotient
+      distribution for that pitch type (mean/std of pitch_metrics'
+      `quotient` column), not the day's own quotients -- same reasoning as
+      every other z-score here.
+    """
+    out_frames = []
+    for pt, day_group in daily_agg.groupby("pitch_type"):
+        season_group = pitch_metrics[pitch_metrics["pitch_type"] == pt]
+        if season_group.empty:
+            # No season leaderboard exists yet for this pitch type at all --
+            # nothing to place a daily reading against.
+            continue
+        day_group = day_group.copy()
+
+        velo_z = _season_pop_zscore(day_group["velo"], season_group["velo"])
+        if pt == "CH":
+            baseline_velo = day_group["player_id"].map(fastball_baseline["velo"])
+            day_velo_gap = baseline_velo - day_group["velo"]
+            season_baseline_velo = season_group["player_id"].map(fastball_baseline["velo"])
+            season_velo_gap = season_baseline_velo - season_group["velo"]
+            gap_z = _season_pop_zscore(day_velo_gap, season_velo_gap).fillna(0.0)
+            velo_z = CH_VELO_GAP_WEIGHT * gap_z + CH_RAW_VELO_WEIGHT * velo_z
+        elif VELO_SHAPE.get(pt) == "abs":
+            velo_z = velo_z.abs()
+        elif VELO_SHAPE.get(pt) == "signed_neg":
+            velo_z = -velo_z
+
+        ivb_z = _season_pop_zscore(day_group["ivb_in"], season_group["ivb_in"])
+        if pt == "CH":
+            baseline_ivb = day_group["player_id"].map(fastball_baseline["ivb_in"])
+            day_ivb_gap = baseline_ivb - day_group["ivb_in"]
+            season_baseline_ivb = season_group["player_id"].map(fastball_baseline["ivb_in"])
+            season_ivb_gap = season_baseline_ivb - season_group["ivb_in"]
+            ivb_gap_z = _season_pop_zscore(day_ivb_gap, season_ivb_gap).abs().fillna(0.0)
+            ivb_z = CH_IVB_GAP_WEIGHT * ivb_gap_z + CH_IVB_RAW_WEIGHT * ivb_z.abs()
+        elif IVB_SHAPE.get(pt) == "abs":
+            ivb_z = ivb_z.abs()
+        elif IVB_SHAPE.get(pt) == "signed_neg":
+            ivb_z = -ivb_z
+
+        horiz_z = _season_pop_zscore(day_group["horizontal_in"], season_group["horizontal_in"])
+        if HORIZ_SHAPE.get(pt) == "abs":
+            horiz_z = horiz_z.abs()
+        elif HORIZ_SHAPE.get(pt) == "signed_neg":
+            horiz_z = -horiz_z
+
+        spin_z = _season_pop_zscore(day_group["spin_rpm"], season_group["spin_rpm"])
+        horiz_weight = HORIZ_WEIGHT_OVERRIDE.get(pt, HORIZ_WEIGHT)
+
+        day_group["ceiling"] = (
+            velo_z + IVB_WEIGHT * ivb_z + horiz_weight * horiz_z + SPIN_WEIGHT * spin_z
+        )
+
+        day_group = day_group.merge(
+            season_group[["player_id", "usage_rate", "delivery_modifier"]],
+            on="player_id", how="left",
+        )
+        day_group = day_group.dropna(subset=["usage_rate", "delivery_modifier"])
+        if day_group.empty:
+            continue
+
+        day_group["daily_quotient"] = (
+            day_group["ceiling"] * (day_group["usage_rate"] ** USAGE_RATE_EXPONENT) * day_group["delivery_modifier"]
+        )
+
+        season_quotient_mean = season_group["quotient"].mean()
+        season_quotient_std = season_group["quotient"].std(ddof=0)
+        if not season_quotient_std or math.isnan(season_quotient_std):
+            day_group["daily_display_score"] = 100.0
+        else:
+            day_group["daily_display_score"] = (
+                100 + 10 * (day_group["daily_quotient"] - season_quotient_mean) / season_quotient_std
+            ).round()
+
+        day_group["game_date"] = game_date
+        out_frames.append(day_group)
+
+    if not out_frames:
+        return pd.DataFrame(columns=[
+            "player_id", "pitch_type", "game_date", "velo", "ivb_in", "horizontal_in",
+            "spin_rpm", "n_pitches", "daily_quotient", "daily_display_score",
+        ])
+
+    result = pd.concat(out_frames, ignore_index=True)
+    return result[[
+        "player_id", "pitch_type", "game_date", "velo", "ivb_in", "horizontal_in",
+        "spin_rpm", "n_pitches", "daily_quotient", "daily_display_score",
+    ]]
+
+
 def compute_pitchers(pitch_metrics: pd.DataFrame, delivery: pd.DataFrame,
                       pitcher_names: pd.DataFrame) -> pd.DataFrame:
     # `delivery` here is already the full, unioned, z-scored frame built by
@@ -1335,6 +1555,52 @@ def run():
         except Exception as e:
             print(f"WARNING: probable-starters fetch failed, skipping this run's update -- "
                   f"leaderboard refresh above is unaffected. Error: {e}", file=sys.stderr)
+
+        # "Yesterday's Best Pitches" for the home page. Same isolation
+        # pattern as probable starters just above, and for the same reason:
+        # this hits Savant again for a single extra day's data, entirely
+        # separate from the season pull that already succeeded and was
+        # logged above, so a problem here (no data yet for yesterday, a
+        # Savant hiccup, an off day) only skips this one box.
+        try:
+            yesterday_str = (datetime.now().date() - timedelta(days=1)).isoformat()
+            daily_events = fetch_yesterdays_pitch_events()
+            if daily_events.empty:
+                print(f"Yesterday's best pitches: no pitch data for {yesterday_str} -- "
+                      f"leaving existing daily_pitch_scores rows for this date as-is.")
+            else:
+                daily_agg = compute_daily_pitch_aggregates(daily_events)
+                if daily_agg.empty:
+                    print(f"Yesterday's best pitches: no (pitcher, pitch type) cleared "
+                          f"DAILY_MIN_PITCHES ({DAILY_MIN_PITCHES}) for {yesterday_str}.")
+                else:
+                    fastball_baseline = build_fastball_baseline(pitch_metrics_raw)
+                    daily_scores = compute_daily_display_scores(
+                        daily_agg, pitch_metrics, fastball_baseline, yesterday_str
+                    )
+                    if daily_scores.empty:
+                        print(f"Yesterday's best pitches: {len(daily_agg)} daily aggregate row(s) for "
+                              f"{yesterday_str}, but none matched a qualifying season pitch_metrics row "
+                              f"to score against.")
+                    else:
+                        daily_scores["player_id"] = daily_scores["player_id"].map(int)
+                        daily_rows = sanitize_records(
+                            daily_scores.where(pd.notnull(daily_scores), None).to_dict(orient="records"),
+                            "daily_pitch_scores",
+                        )
+                        supabase.table("daily_pitch_scores").delete().eq("game_date", yesterday_str).execute()
+                        upsert_in_batches(
+                            supabase.table("daily_pitch_scores"), daily_rows,
+                            on_conflict="player_id,pitch_type,game_date",
+                        )
+                        print(f"Yesterday's best pitches: wrote {len(daily_rows)} (pitcher, pitch type) "
+                              f"rows for {yesterday_str}.")
+
+            daily_cutoff = (datetime.now(timezone.utc).date() - timedelta(days=DAILY_SCORE_RETENTION_DAYS)).isoformat()
+            supabase.table("daily_pitch_scores").delete().lt("game_date", daily_cutoff).execute()
+        except Exception as e:
+            print(f"WARNING: yesterday's-best-pitches daily scoring failed, skipping this run's "
+                  f"update -- leaderboard refresh above is unaffected. Error: {e}", file=sys.stderr)
 
     except Exception as e:
         supabase.table("refresh_log").update({
