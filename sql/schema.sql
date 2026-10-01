@@ -92,10 +92,66 @@ create table if not exists probable_starters (
     unique (game_date, player_id)
 );
 
+-- Day-over-day score snapshots, used by the home page's "Biggest Movers" box
+-- to compare today's display_score against a ~week-old one. (Predates this
+-- schema file being kept fully in sync -- documented here now so a fresh
+-- database setup doesn't miss it.)
+create table if not exists score_snapshots (
+    id              bigint generated always as identity primary key,
+    player_id       bigint not null references pitchers(player_id) on delete cascade,
+    pitch_type      text not null,
+    display_score   numeric,
+    snapshot_date   date not null,
+    unique (player_id, pitch_type, snapshot_date)
+);
+
+-- One row per (pitcher, pitch type, calendar day) that pitcher threw at
+-- least DAILY_MIN_PITCHES (see refresh.py) pitches of that type -- a true
+-- single-day uScore+, not a season-to-date average, so it can surface a
+-- real-time trend (e.g. a changeup looking sharper in one start) that a
+-- season-cumulative number is too diluted to show. velo/ivb_in/
+-- horizontal_in/spin_rpm are genuine single-day averages; usage_rate,
+-- delivery_modifier, and (for changeups) the fastball-gap baseline are NOT
+-- recomputed daily -- the pipeline reuses that pitcher's current SEASON
+-- values for all three (day-specific usage is mostly game-plan noise,
+-- release characteristics don't shift day to day, and a day-only fastball
+-- baseline risks "no fastball thrown that day"), and active spin% is
+-- excluded entirely (no daily reading exists from Savant; confirmed via a
+-- real A/B comparison that excluding it changes the season formula's
+-- output negligibly). Every z-score behind daily_quotient/
+-- daily_display_score is taken against the SEASON population's
+-- distribution for that pitch type, so "100" keeps meaning the same thing
+-- here as it does in pitch_metrics.display_score. Powers the home page's
+-- "Yesterday's Best Pitches" box.
+create table if not exists daily_pitch_scores (
+    id              bigint generated always as identity primary key,
+    player_id       bigint not null references pitchers(player_id) on delete cascade,
+    pitch_type      text not null,
+    game_date       date not null,
+
+    velo            numeric,
+    ivb_in          numeric,
+    horizontal_in   numeric,
+    spin_rpm        numeric,
+    n_pitches       int not null,              -- how many of this type were thrown this day
+
+    daily_quotient       numeric,              -- same math as pitch_metrics.quotient, just for
+                                                 -- this one day's readings scored against the
+                                                 -- season's distribution
+    daily_display_score  numeric,              -- same 100-average scale as pitch_metrics.
+                                                 -- display_score, rescaled against the SEASON's
+                                                 -- quotient distribution for that pitch type
+
+    created_at      timestamptz not null default now(),
+    unique (player_id, pitch_type, game_date)
+);
+
 create index if not exists idx_pitch_metrics_player on pitch_metrics(player_id, season);
 create index if not exists idx_pitch_metrics_type on pitch_metrics(pitch_type, season);
 create index if not exists idx_pitchers_season on pitchers(season);
 create index if not exists idx_probable_starters_date on probable_starters(game_date);
+create index if not exists idx_score_snapshots_date on score_snapshots(snapshot_date);
+create index if not exists idx_daily_pitch_scores_date on daily_pitch_scores(game_date);
 
 -- Row Level Security: the public website uses Supabase's "anon" key, which
 -- must only ever be able to READ. All writes go through the refresh script,
@@ -104,6 +160,8 @@ alter table pitchers enable row level security;
 alter table pitch_metrics enable row level security;
 alter table refresh_log enable row level security;
 alter table probable_starters enable row level security;
+alter table score_snapshots enable row level security;
+alter table daily_pitch_scores enable row level security;
 
 create policy "public read pitchers" on pitchers
     for select using (true);
@@ -112,6 +170,10 @@ create policy "public read pitch_metrics" on pitch_metrics
 create policy "public read refresh_log" on refresh_log
     for select using (true);
 create policy "public read probable_starters" on probable_starters
+    for select using (true);
+create policy "public read score_snapshots" on score_snapshots
+    for select using (true);
+create policy "public read daily_pitch_scores" on daily_pitch_scores
     for select using (true);
 
 -- No insert/update/delete policies are created for the anon role, so the
