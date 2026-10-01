@@ -173,6 +173,31 @@ IVB_WEIGHT_BELOW_AVG_OVERRIDE = {
     "FF": 0.60,
 }
 
+# The mirror image of IVB_WEIGHT_BELOW_AVG_OVERRIDE above: IVB_WEIGHT
+# applies ONLY to rows below league-average IVB; rows AT OR ABOVE average
+# use this discounted weight instead. Added for SI (2026-10 model review,
+# right after FF) for the opposite reason FF needed a below-average
+# discount: a sinker's defining, sought-after trait runs the other way --
+# heavy sink (BELOW-average IVB, a "true sinker" like Logan Webb's) is the
+# archetype this model should lean toward recognizing, while an
+# above-average-IVB sinker is closer to carrying/riding, a less
+# characteristic (if still perfectly good) shape for the pitch type. SI's
+# IVB shape was already "abs" (shipped in an earlier pass, unlike FF which
+# started from "signed"), so this is a pure weight-magnitude tweak on top
+# of an unchanged shape, not a shape flip -- which is also why this lever
+# tested meaningfully gentler than FF's equivalent: even discounting
+# above-average SI IVB all the way to 0.0 only produced a Spearman of
+# 0.944 vs. the pre-existing abs treatment (compare FF's 0.60 alone
+# producing 0.805 vs. its pre-existing signed treatment). 0.60 was chosen
+# to match FF's value for consistency, and spot-checked against real
+# elite high-carry sinkerballers (Hader, Chapman, Dodd, Whitlock,
+# Montgomery, Jansen, Hunter Greene) -- all stayed clearly above-average
+# even at far more aggressive discount levels than 0.60, confirming this
+# compresses the high-carry group without punishing it into irrelevance.
+IVB_WEIGHT_ABOVE_AVG_OVERRIDE = {
+    "SI": 0.60,
+}
+
 # ---------------------------------------------------------------------------
 # OPEN ITEM (2026-10 model review): per-pitch-type re-weighting, paused.
 #
@@ -1069,17 +1094,24 @@ def compute_pitch_quotients(pitch_metrics: pd.DataFrame, active_spin_fallback: p
         horiz_weight = HORIZ_WEIGHT_OVERRIDE.get(pt, HORIZ_WEIGHT)
 
         # Most pitch types use a single flat IVB_WEIGHT for every row. A
-        # pitch type listed in IVB_WEIGHT_BELOW_AVG_OVERRIDE (currently just
-        # FF -- see its definition above) instead gets a per-row weight:
-        # full IVB_WEIGHT for pitchers at/above league-average IVB, the
-        # discounted override weight for pitchers below it. pt == "CH" is
-        # excluded here on purpose -- its IVB term is already its own
-        # gap-blend composite (see above), not a plain shape-flagged z-score,
-        # so this below-average-discount concept doesn't apply to it.
+        # pitch type listed in IVB_WEIGHT_BELOW_AVG_OVERRIDE (FF) or
+        # IVB_WEIGHT_ABOVE_AVG_OVERRIDE (SI -- see both definitions above)
+        # instead gets a per-row weight: the discounted override weight on
+        # whichever side of league-average IVB that pitch type's dict
+        # targets, full IVB_WEIGHT on the other side. The two dicts are
+        # mutually exclusive per pitch type (nothing is listed in both).
+        # pt == "CH" is excluded here on purpose -- its IVB term is already
+        # its own gap-blend composite (see above), not a plain
+        # shape-flagged z-score, so this conditional-discount concept
+        # doesn't apply to it.
         below_avg_ivb_weight = IVB_WEIGHT_BELOW_AVG_OVERRIDE.get(pt)
+        above_avg_ivb_weight = IVB_WEIGHT_ABOVE_AVG_OVERRIDE.get(pt)
         if pt != "CH" and below_avg_ivb_weight is not None:
             ivb_weight = pd.Series(IVB_WEIGHT, index=group.index)
             ivb_weight[ivb_z_raw < 0] = below_avg_ivb_weight
+        elif pt != "CH" and above_avg_ivb_weight is not None:
+            ivb_weight = pd.Series(IVB_WEIGHT, index=group.index)
+            ivb_weight[ivb_z_raw >= 0] = above_avg_ivb_weight
         else:
             ivb_weight = IVB_WEIGHT
 
@@ -1221,13 +1253,19 @@ def compute_daily_display_scores(daily_agg: pd.DataFrame, pitch_metrics: pd.Data
         horiz_weight = HORIZ_WEIGHT_OVERRIDE.get(pt, HORIZ_WEIGHT)
 
         # Same per-row conditional IVB weight as compute_pitch_quotients --
-        # see IVB_WEIGHT_BELOW_AVG_OVERRIDE's definition for the reasoning.
-        # "Below average" here means below the SEASON population's mean,
-        # consistent with every other z-score in this daily function.
+        # see IVB_WEIGHT_BELOW_AVG_OVERRIDE's and
+        # IVB_WEIGHT_ABOVE_AVG_OVERRIDE's definitions for the reasoning.
+        # "Below"/"above" average here means relative to the SEASON
+        # population's mean, consistent with every other z-score in this
+        # daily function.
         below_avg_ivb_weight = IVB_WEIGHT_BELOW_AVG_OVERRIDE.get(pt)
+        above_avg_ivb_weight = IVB_WEIGHT_ABOVE_AVG_OVERRIDE.get(pt)
         if pt != "CH" and below_avg_ivb_weight is not None:
             ivb_weight = pd.Series(IVB_WEIGHT, index=day_group.index)
             ivb_weight[ivb_z_raw < 0] = below_avg_ivb_weight
+        elif pt != "CH" and above_avg_ivb_weight is not None:
+            ivb_weight = pd.Series(IVB_WEIGHT, index=day_group.index)
+            ivb_weight[ivb_z_raw >= 0] = above_avg_ivb_weight
         else:
             ivb_weight = IVB_WEIGHT
 
