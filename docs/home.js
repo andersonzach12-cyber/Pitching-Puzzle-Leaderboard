@@ -183,6 +183,54 @@ function renderMoverBox(title, rows) {
 }
 
 // --------------------------------------------------------------------------
+// "Yesterday's Best Pitches" -- a true single-day uScore+ (see
+// daily_pitch_scores / compute_daily_display_scores in refresh.py), so a
+// pitch that looked unusually sharp in one start can show up here even when
+// a pitcher's season-cumulative number is too diluted by a big sample to
+// move much. Reuses daysAgoDateString(1) -- same local-date convention as
+// the movers box above -- rather than a separate "yesterday" helper.
+// --------------------------------------------------------------------------
+
+const YESTERDAY_TOP_N = 5;
+
+async function fetchYesterdaysBest() {
+  const { data, error } = await client
+    .from("daily_pitch_scores")
+    .select("player_id, pitch_type, daily_display_score, n_pitches, pitchers(pitcher_name)")
+    .eq("game_date", daysAgoDateString(1))
+    .not("daily_display_score", "is", null)
+    .order("daily_display_score", { ascending: false, nullsFirst: false })
+    .limit(YESTERDAY_TOP_N);
+  if (error) throw error;
+  return data.map((r) => ({
+    player_id: r.player_id,
+    pitcher_name: formatPitcherName(r.pitchers ? r.pitchers.pitcher_name : "(unknown)"),
+    pitch_type: r.pitch_type,
+    score: r.daily_display_score,
+    n_pitches: r.n_pitches,
+  }));
+}
+
+function renderYesterdayBox(rows) {
+  const items = rows.map((r) => `
+    <li>
+      <div class="watch-main">
+        <a class="watch-name" href="${playerProfileUrl(r.player_id, r.pitcher_name)}">${escapeHtml(r.pitcher_name || "")}</a>
+        <span class="watch-pitch">${escapeHtml(PITCH_LABELS[r.pitch_type] || r.pitch_type)} (${formatScore(r.score)})</span>
+      </div>
+      <div class="watch-meta">${r.n_pitches} thrown yesterday</div>
+    </li>
+  `).join("");
+
+  return `
+    <div class="mover-box watch-box">
+      <h3>Yesterday's Best Pitches</h3>
+      <ol class="watch-list">${items || "<li class=\"home-empty\">No qualifying pitches from yesterday yet</li>"}</ol>
+    </div>
+  `;
+}
+
+// --------------------------------------------------------------------------
 // "Pitchers to watch today" -- today's probable starters, ranked by each
 // starter's single best pitch (highest quotient in their arsenal). Two
 // queries rather than an embedded join: probable_starters -> pitchers for
@@ -384,9 +432,13 @@ async function loadHome() {
   const moversRow = document.getElementById("movers-row");
   status.textContent = "Loading...";
   try {
-    const [pitchResults, movers, watchList] = await Promise.all([
+    const [pitchResults, movers, yesterdaysBest, watchList] = await Promise.all([
       Promise.all(HOME_PITCH_TYPES.map((pt) => fetchTopN(pt).then((rows) => ({ pt, rows })))),
       fetchMovers().catch((err) => {
+        console.error(err);
+        return [];
+      }),
+      fetchYesterdaysBest().catch((err) => {
         console.error(err);
         return [];
       }),
@@ -398,6 +450,7 @@ async function loadHome() {
     grid.innerHTML = pitchResults.map(({ pt, rows }) => renderCard(pt, rows)).join("");
     moversRow.innerHTML =
       renderMoverBox("Past Week's Biggest Movers", movers) +
+      renderYesterdayBox(yesterdaysBest) +
       renderWatchBox(watchList);
     status.textContent = "";
   } catch (err) {
