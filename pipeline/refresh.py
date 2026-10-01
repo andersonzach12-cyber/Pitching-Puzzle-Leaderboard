@@ -131,6 +131,57 @@ HORIZ_WEIGHT = 0.25
 SPIN_WEIGHT = 0.10
 DELIVERY_WEIGHT_IN_USCORE = 0.3
 
+# ---------------------------------------------------------------------------
+# OPEN ITEM (2026-10 model review): per-pitch-type re-weighting, paused.
+#
+# IVB_WEIGHT/HORIZ_WEIGHT/ACTIVE_SPIN_WEIGHT above are still blanket/
+# hand-picked values -- a PCA pass against the real 2026-season
+# `pitch_metrics` table (PC1 loadings normalized to velocity, which has no
+# configurable weight of its own) produced candidate per-pitch-type
+# replacements, but we deliberately deferred applying them pending further
+# validation. Only the SHAPE changes from that same review went in tonight
+# (see IVB_SHAPE/HORIZ_SHAPE/VELO_SHAPE above and ACTIVE_SPIN_SHAPE below);
+# no weight values were touched.
+#
+# Candidate weights from the PCA pass, for when we pick this back up:
+#   IVB_WEIGHT_OVERRIDE:   FF 1.14, SI 1.10, FC 0.24, CU/KC 1.22, SL 0.54, ST 1.46
+#   HORIZ_WEIGHT_OVERRIDE: FF 0.17, SI 0.25, FC 0.15, CU/KC 0.14, SL 0.49, ST 1.56, SV 0.5 (unchanged)
+#   ACTIVE_SPIN_WEIGHT:    FF 0.06, SI 0.05, FC 0.03, CU/KC 0.11, SL 0.06, ST 0.23, SV 0.10 (unchanged)
+# (CH/FS/FO/CS left untouched in all three -- CH/FS because raw velocity
+# barely loads on their dominant axis of variation, making a PCA-derived
+# ratio-to-velocity unstable there; FO/CS because the season sample is only
+# 2 pitchers league-wide.)
+#
+# Known issues to resolve before applying these, not just rubber-stamping
+# the numbers above:
+#   - PC1-only captures each pitch type's DOMINANT shared axis of variation,
+#     not every real archetype. Checked PC2/PC3 for FC and found IVB loads
+#     weakly on PC1 (hence the proposed 0.24, a big cut from 0.95) but
+#     strongly on PC3 (0.92, a separate ~19% of variance) -- almost
+#     certainly where an outlier like a Rasmussen-style depth-is-the-whole-
+#     pitch cutter lives, which this docstring already names as the reason
+#     IVB matters for cutters. A pure PC1 reweight would systematically
+#     undersell that archetype. ST showed a smaller version of the same
+#     pattern. Worth deciding whether to live with that (PC1 = "the common
+#     case") or address it directly (e.g. a two-component blend) before
+#     shipping any weight change derived this way.
+#   - ST's candidate change is the most aggressive of the batch and the
+#     least certain: its horizontal weight would more than double, on top of
+#     a shape flip, on top of a velocity shape flip whose own PCA signal was
+#     close to a coin flip (32.1% vs 30.6% variance explained) -- three
+#     compounding changes at once produced the single largest swing of any
+#     pitch type (+110 display-score points for one pitcher in testing).
+#     Sanity-check this against real sweeper names before trusting it.
+#   - CU/KC's candidate IVB/horizontal weight bump is tangled up with the
+#     shape flip applied tonight, so isolate the weight's effect on its own
+#     before adding it (don't just drop in 1.22/0.14 and assume last
+#     weekend's shape-only reshuffling bounds still apply).
+#   - CS (slow curve) wasn't touched tonight at all, shape or weight --
+#     only 2 pitchers league-wide throw a tracked slow curve this season, so
+#     any shape or weight call there (velocity/IVB/horizontal -> abs was
+#     floated earlier) is pure analogy to CU/SL, never PCA-validated.
+# ---------------------------------------------------------------------------
+
 # usage_rate is dampened with an exponent < 1 rather than applied linearly.
 # Plain linear usage let raw usage share swing a pitch's score by as much as
 # (or more than) real differences in shape -- e.g. two cutters with a
@@ -173,10 +224,19 @@ USAGE_RATE_EXPONENT = 0.75
 #     treatment), but an unusually high-riding sinker/two-seam hybrid can
 #     also be a real, distinct weapon, so both extremes are rewarded rather
 #     than only one.
+#   - Curveballs and knuckle curves switched signed_neg -> abs (2026-10
+#     model review): the old treatment only rewarded exceptional drop, but a
+#     tight, flatter power curve (less depth than average) is just as much a
+#     distinct weapon as a huge sweeping 12-6 curve -- same "reward either
+#     extreme" logic already applied to sliders/cutters/sinkers above. CU and
+#     KC are kept configured identically everywhere in this file (the two
+#     pitch types are too similar, and too inconsistently distinguished in
+#     the underlying Statcast tagging, to justify separate hand-tuning) --
+#     this was already true for VELO_SHAPE below, now true here too.
 # Defaults to "signed" for any pitch type not listed here.
 IVB_SHAPE = {
     "SL": "abs", "ST": "abs", "SV": "abs", "FC": "abs", "SI": "abs",
-    "CH": "signed_neg", "CU": "signed_neg", "KC": "signed_neg", "FS": "signed_neg",
+    "CH": "signed_neg", "CU": "abs", "KC": "abs", "FS": "signed_neg",
 }
 
 # Whether velocity should reward being faster ("signed", the default),
@@ -249,12 +309,24 @@ HORIZ_WEIGHT_OVERRIDE = {
 #     arm-side-running four-seamer and a cut-riding four-seamer (like
 #     Justin Steele's) can both be plus pitches -- so "abs" rewards
 #     distance from average in either direction rather than picking a side.
+#
+# Sinkers, curveballs/knuckle curves, and sliders switched signed/signed_neg
+# -> abs (2026-10 model review): each had the same underlying issue as
+# four-seamers above -- real pitchers get value from unusually large break
+# in EITHER direction (a sinker with almost no arm-side run but elite
+# sink/cut character, a tight short curve, a slider that breaks the "wrong"
+# way but still misses bats), not just from more of whichever single
+# direction happened to be flagged as "correct." Sweepers and slurves are
+# left as signed_neg for now pending further review (see the open
+# re-weighting note near HORIZ_WEIGHT_OVERRIDE below -- ST's shape and
+# weight are tangled up with a larger pending change, not a quick swap like
+# these).
 # Defaults to "signed" for any pitch type not listed here.
 HORIZ_SHAPE = {
     "FF": "abs",
     "FC": "signed_neg",
-    "CU": "signed_neg", "KC": "signed_neg", "CS": "signed_neg",
-    "SL": "signed_neg", "ST": "signed_neg", "SV": "signed_neg",
+    "SI": "abs", "CU": "abs", "KC": "abs", "CS": "signed_neg",
+    "SL": "abs", "ST": "signed_neg", "SV": "signed_neg",
 }
 
 # Every id column Savant has used across its various CSV exports, in
