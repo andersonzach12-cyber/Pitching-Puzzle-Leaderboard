@@ -209,14 +209,13 @@ USAGE_RATE_EXPONENT = 0.75
 # exceptional depth (e.g. Drew Rasmussen's, which drops far more than a
 # typical cutter and grades as his best pitch by results) just as easily as
 # from exceptional ride).
-#   - Changeups, curveballs, knuckle curves, and splitters are valued
-#     specifically for dropping MORE than average (real deception/tunneling
-#     off the fastball) -- "signed_neg", so more drop is rewarded, not
-#     penalized. (Confirmed on real splitter examples: Gausman's -- one of
-#     the most respected splitters in the game -- and Sasaki's were both
-#     landing at/below league average under the old signed treatment, which
-#     rewarded LESS drop on a pitch whose whole purpose is heavy, late
-#     plunge.)
+#   - Splitters are valued specifically for dropping MORE than average (real
+#     deception/tunneling off the fastball) -- "signed_neg", so more drop is
+#     rewarded, not penalized. (Confirmed on real splitter examples:
+#     Gausman's -- one of the most respected splitters in the game -- and
+#     Sasaki's were both landing at/below league average under the old
+#     signed treatment, which rewarded LESS drop on a pitch whose whole
+#     purpose is heavy, late plunge.)
 #   - Sliders, sweepers, slurves, cutters, and sinkers get real value from
 #     either kind of unusual tilt -- "abs". A sinker's defining trait is
 #     heavy sink (confirmed on Logan Webb, whose near-zero IVB -- elite,
@@ -233,10 +232,20 @@ USAGE_RATE_EXPONENT = 0.75
 #     pitch types are too similar, and too inconsistently distinguished in
 #     the underlying Statcast tagging, to justify separate hand-tuning) --
 #     this was already true for VELO_SHAPE below, now true here too.
+#   - Changeups switched signed_neg -> abs the same day, on the same
+#     reasoning (an unusually flat or rising changeup can be as much a
+#     distinct weapon as an unusually diving one) -- but unlike the
+#     curveball call above, this one isn't backed by a clear signal in the
+#     data either way: a PCA check found changeup IVB's own contribution to
+#     the pitch type's dominant axis of variation is weak under BOTH signed
+#     and abs (loadings of -0.18 vs +0.12, both small next to horizontal/
+#     spin which dominate), with next to no difference in variance explained
+#     (34.3% vs 34.0%). Treat this one as a pure philosophy call, not a
+#     data-validated fix the way curveballs/sinkers were.
 # Defaults to "signed" for any pitch type not listed here.
 IVB_SHAPE = {
     "SL": "abs", "ST": "abs", "SV": "abs", "FC": "abs", "SI": "abs",
-    "CH": "signed_neg", "CU": "abs", "KC": "abs", "FS": "signed_neg",
+    "CH": "abs", "CU": "abs", "KC": "abs", "FS": "signed_neg",
 }
 
 # Whether velocity should reward being faster ("signed", the default),
