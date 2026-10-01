@@ -147,22 +147,54 @@ HORIZ_WEIGHT = 0.25
 SPIN_WEIGHT = 0.10
 DELIVERY_WEIGHT_IN_USCORE = 0.3
 
+# Per-pitch-type override: when a pitch type's IVB shape is "abs" (reward
+# distance from league-average IVB in EITHER direction -- see IVB_SHAPE
+# below) AND that pitch type is listed here, IVB_WEIGHT applies ONLY to
+# rows at or above the league-average IVB; rows BELOW average use this
+# discounted weight instead. Added for FF (2026-10 model review) as a
+# deliberate middle ground between the old "signed" treatment (more carry
+# always rewarded, less carry always penalized) and a straight "abs" flip
+# (equal credit either direction): real four-seamers with genuinely
+# below-average IVB -- Chris Sale's, Sean Manaea's, Logan Webb's -- are
+# known, deliberate weapons specifically BECAUSE of their flatter shape,
+# so flipping FF's IVB to "abs" is right in spirit, but a flat/heavy
+# four-seamer is still generally a harder pitch to get right than a
+# carrying one, so it's discounted relative to above-average carry rather
+# than credited equally. 0.60 (vs. IVB_WEIGHT's 0.95) was chosen by
+# sweeping 0.95/0.80/0.65/0.50/0.35/0.0 against the real 2026 FF population
+# and spot-checking named pitchers at each step -- 0.60 reshuffles the
+# leaderboard meaningfully (Spearman 0.80 vs. the old signed treatment) and
+# gives Sale et al. real, substantial credit, without drifting all the way
+# to pure ABS's 0.706 Spearman / up to +49-point swings. Only FF is listed
+# here for now -- this pattern (an asymmetric, direction-conditional
+# weight) is new to the model as of this change, and hasn't been
+# considered for any other pitch type yet.
+IVB_WEIGHT_BELOW_AVG_OVERRIDE = {
+    "FF": 0.60,
+}
+
 # ---------------------------------------------------------------------------
 # OPEN ITEM (2026-10 model review): per-pitch-type re-weighting, paused.
 #
 # IVB_WEIGHT/HORIZ_WEIGHT/ACTIVE_SPIN_WEIGHT above are still blanket/
-# hand-picked values -- a PCA pass against the real 2026-season
-# `pitch_metrics` table (PC1 loadings normalized to velocity, which has no
-# configurable weight of its own) produced candidate per-pitch-type
-# replacements, but we deliberately deferred applying them pending further
-# validation. Only the SHAPE changes from that same review went in tonight
-# (see IVB_SHAPE/HORIZ_SHAPE/VELO_SHAPE above and ACTIVE_SPIN_SHAPE below);
-# no weight values were touched.
+# hand-picked values (aside from FF's IVB, resolved above) -- a PCA pass
+# against the real 2026-season `pitch_metrics` table (PC1 loadings
+# normalized to velocity, which has no configurable weight of its own)
+# produced candidate per-pitch-type replacements, but we deliberately
+# deferred applying them pending further validation. Only the SHAPE changes
+# from that same review went in at the time (see IVB_SHAPE/HORIZ_SHAPE/
+# VELO_SHAPE above and ACTIVE_SPIN_SHAPE below); FF's weight was resolved
+# separately and directly above, going pitch-by-pitch rather than from this
+# batch of PCA candidates (FF's own PC1 only explained ~38% of variance,
+# with PC2/PC3 close behind at ~28%/~20% -- no single dominant archetype to
+# derive a trustworthy ratio from, so a PCA-ratio reweight was skipped for
+# FF specifically; see the dedicated FF review for the full writeup).
 #
-# Candidate weights from the PCA pass, for when we pick this back up:
-#   IVB_WEIGHT_OVERRIDE:   FF 1.14, SI 1.10, FC 0.24, CU/KC 1.22, SL 0.54, ST 1.46
-#   HORIZ_WEIGHT_OVERRIDE: FF 0.17, SI 0.25, FC 0.15, CU/KC 0.14, SL 0.49, ST 1.56, SV 0.5 (unchanged)
-#   ACTIVE_SPIN_WEIGHT:    FF 0.06, SI 0.05, FC 0.03, CU/KC 0.11, SL 0.06, ST 0.23, SV 0.10 (unchanged)
+# Candidate weights from the PCA pass, for when we pick the rest of these
+# back up (SI next, most likely, given FF is now done):
+#   IVB_WEIGHT_OVERRIDE:   SI 1.10, FC 0.24, CU/KC 1.22, SL 0.54, ST 1.46
+#   HORIZ_WEIGHT_OVERRIDE: SI 0.25, FC 0.15, CU/KC 0.14, SL 0.49, ST 1.56, SV 0.5 (unchanged)
+#   ACTIVE_SPIN_WEIGHT:    SI 0.05, FC 0.03, CU/KC 0.11, SL 0.06, ST 0.23, SV 0.10 (unchanged)
 # (CH/FS/FO/CS left untouched in all three -- CH/FS because raw velocity
 # barely loads on their dominant axis of variation, making a PCA-derived
 # ratio-to-velocity unstable there; FO/CS because the season sample is only
@@ -171,7 +203,8 @@ DELIVERY_WEIGHT_IN_USCORE = 0.3
 # Known issues to resolve before applying these, not just rubber-stamping
 # the numbers above:
 #   - PC1-only captures each pitch type's DOMINANT shared axis of variation,
-#     not every real archetype. Checked PC2/PC3 for FC and found IVB loads
+#     not every real archetype -- the exact issue that sank a PCA-ratio
+#     approach for FF above. Checked PC2/PC3 for FC and found IVB loads
 #     weakly on PC1 (hence the proposed 0.24, a big cut from 0.95) but
 #     strongly on PC3 (0.92, a separate ~19% of variance) -- almost
 #     certainly where an outlier like a Rasmussen-style depth-is-the-whole-
@@ -179,8 +212,9 @@ DELIVERY_WEIGHT_IN_USCORE = 0.3
 #     IVB matters for cutters. A pure PC1 reweight would systematically
 #     undersell that archetype. ST showed a smaller version of the same
 #     pattern. Worth deciding whether to live with that (PC1 = "the common
-#     case") or address it directly (e.g. a two-component blend) before
-#     shipping any weight change derived this way.
+#     case") or address it directly (e.g. a two-component blend, or an
+#     asymmetric conditional weight like FF's above) before shipping any
+#     weight change derived this way.
 #   - ST's candidate change is the most aggressive of the batch and the
 #     least certain: its horizontal weight would more than double, on top of
 #     a shape flip, on top of a velocity shape flip whose own PCA signal was
@@ -189,13 +223,13 @@ DELIVERY_WEIGHT_IN_USCORE = 0.3
 #     pitch type (+110 display-score points for one pitcher in testing).
 #     Sanity-check this against real sweeper names before trusting it.
 #   - CU/KC's candidate IVB/horizontal weight bump is tangled up with the
-#     shape flip applied tonight, so isolate the weight's effect on its own
-#     before adding it (don't just drop in 1.22/0.14 and assume last
-#     weekend's shape-only reshuffling bounds still apply).
-#   - CS (slow curve) wasn't touched tonight at all, shape or weight --
-#     only 2 pitchers league-wide throw a tracked slow curve this season, so
-#     any shape or weight call there (velocity/IVB/horizontal -> abs was
-#     floated earlier) is pure analogy to CU/SL, never PCA-validated.
+#     shape flip applied earlier, so isolate the weight's effect on its own
+#     before adding it (don't just drop in 1.22/0.14 and assume the
+#     shape-only reshuffling bounds measured at the time still apply).
+#   - CS (slow curve) hasn't been touched at all, shape or weight -- only 2
+#     pitchers league-wide throw a tracked slow curve this season, so any
+#     shape or weight call there (velocity/IVB/horizontal -> abs was floated
+#     earlier) is pure analogy to CU/SL, never PCA-validated.
 # ---------------------------------------------------------------------------
 
 # usage_rate is dampened with an exponent < 1 rather than applied linearly.
@@ -255,10 +289,20 @@ USAGE_RATE_EXPONENT = 0.75
 #     treatment once it became clear league-relative IVB alone can't
 #     distinguish "mirrors the fastball's shape" from "diverges hard from
 #     it," which is the actual question for a changeup.
+#   - Four-seamers switched signed -> abs (2026-10 model review, done
+#     pitch-by-pitch rather than as part of the batch above): real four-seam
+#     fastballs get genuine value from an unusually LOW-carry, flat/heavy
+#     shape too (Chris Sale's, Sean Manaea's, Logan Webb's are known,
+#     deliberate weapons built around exactly that), not just from
+#     exceptional ride -- same "reward either extreme" logic as every other
+#     entry in this dict. Unlike those, though, FF's below-average side is
+#     ALSO discounted relative to its above-average side rather than
+#     credited equally -- see IVB_WEIGHT_BELOW_AVG_OVERRIDE above for why
+#     and how.
 # Defaults to "signed" for any pitch type not listed here.
 IVB_SHAPE = {
     "SL": "abs", "ST": "abs", "SV": "abs", "FC": "abs", "SI": "abs",
-    "CU": "abs", "KC": "abs", "FS": "signed_neg",
+    "CU": "abs", "KC": "abs", "FS": "signed_neg", "FF": "abs",
 }
 
 # Whether velocity should reward being faster ("signed", the default),
@@ -994,7 +1038,10 @@ def compute_pitch_quotients(pitch_metrics: pd.DataFrame, active_spin_fallback: p
             velo_z = velo_z.abs()
         elif VELO_SHAPE.get(pt) == "signed_neg":
             velo_z = -velo_z
-        ivb_z = zscore(group["ivb_in"])
+        ivb_z_raw = zscore(group["ivb_in"])  # kept pre-abs/pre-sign-flip: IVB_WEIGHT_BELOW_AVG_OVERRIDE
+                                              # needs to know which rows were below league average
+                                              # BEFORE any shape transform collapses that information.
+        ivb_z = ivb_z_raw
         if pt == "CH":
             # Blend IVB-separation-from-own-fastball with raw league-
             # relative IVB (see CH_IVB_GAP_WEIGHT/CH_IVB_RAW_WEIGHT above),
@@ -1021,9 +1068,24 @@ def compute_pitch_quotients(pitch_metrics: pd.DataFrame, active_spin_fallback: p
         as_weight = ACTIVE_SPIN_WEIGHT.get(pt, 0.0)
         horiz_weight = HORIZ_WEIGHT_OVERRIDE.get(pt, HORIZ_WEIGHT)
 
+        # Most pitch types use a single flat IVB_WEIGHT for every row. A
+        # pitch type listed in IVB_WEIGHT_BELOW_AVG_OVERRIDE (currently just
+        # FF -- see its definition above) instead gets a per-row weight:
+        # full IVB_WEIGHT for pitchers at/above league-average IVB, the
+        # discounted override weight for pitchers below it. pt == "CH" is
+        # excluded here on purpose -- its IVB term is already its own
+        # gap-blend composite (see above), not a plain shape-flagged z-score,
+        # so this below-average-discount concept doesn't apply to it.
+        below_avg_ivb_weight = IVB_WEIGHT_BELOW_AVG_OVERRIDE.get(pt)
+        if pt != "CH" and below_avg_ivb_weight is not None:
+            ivb_weight = pd.Series(IVB_WEIGHT, index=group.index)
+            ivb_weight[ivb_z_raw < 0] = below_avg_ivb_weight
+        else:
+            ivb_weight = IVB_WEIGHT
+
         ceiling = (
             velo_z
-            + IVB_WEIGHT * ivb_z
+            + ivb_weight * ivb_z
             + horiz_weight * horiz_z
             + SPIN_WEIGHT * spin_z
             + as_weight * group["active_spin_quotient"]
@@ -1132,7 +1194,11 @@ def compute_daily_display_scores(daily_agg: pd.DataFrame, pitch_metrics: pd.Data
         elif VELO_SHAPE.get(pt) == "signed_neg":
             velo_z = -velo_z
 
-        ivb_z = _season_pop_zscore(day_group["ivb_in"], season_group["ivb_in"])
+        ivb_z_raw = _season_pop_zscore(day_group["ivb_in"], season_group["ivb_in"])  # kept pre-shape,
+                                              # same reason as compute_pitch_quotients: needed to know
+                                              # which rows are below the SEASON average IVB before any
+                                              # abs()/sign-flip collapses that information.
+        ivb_z = ivb_z_raw
         if pt == "CH":
             baseline_ivb = day_group["player_id"].map(fastball_baseline["ivb_in"])
             day_ivb_gap = baseline_ivb - day_group["ivb_in"]
@@ -1154,8 +1220,19 @@ def compute_daily_display_scores(daily_agg: pd.DataFrame, pitch_metrics: pd.Data
         spin_z = _season_pop_zscore(day_group["spin_rpm"], season_group["spin_rpm"])
         horiz_weight = HORIZ_WEIGHT_OVERRIDE.get(pt, HORIZ_WEIGHT)
 
+        # Same per-row conditional IVB weight as compute_pitch_quotients --
+        # see IVB_WEIGHT_BELOW_AVG_OVERRIDE's definition for the reasoning.
+        # "Below average" here means below the SEASON population's mean,
+        # consistent with every other z-score in this daily function.
+        below_avg_ivb_weight = IVB_WEIGHT_BELOW_AVG_OVERRIDE.get(pt)
+        if pt != "CH" and below_avg_ivb_weight is not None:
+            ivb_weight = pd.Series(IVB_WEIGHT, index=day_group.index)
+            ivb_weight[ivb_z_raw < 0] = below_avg_ivb_weight
+        else:
+            ivb_weight = IVB_WEIGHT
+
         day_group["ceiling"] = (
-            velo_z + IVB_WEIGHT * ivb_z + horiz_weight * horiz_z + SPIN_WEIGHT * spin_z
+            velo_z + ivb_weight * ivb_z + horiz_weight * horiz_z + SPIN_WEIGHT * spin_z
         )
 
         day_group = day_group.merge(
