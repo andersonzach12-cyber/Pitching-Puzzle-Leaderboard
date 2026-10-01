@@ -232,20 +232,17 @@ USAGE_RATE_EXPONENT = 0.75
 #     pitch types are too similar, and too inconsistently distinguished in
 #     the underlying Statcast tagging, to justify separate hand-tuning) --
 #     this was already true for VELO_SHAPE below, now true here too.
-#   - Changeups switched signed_neg -> abs the same day, on the same
-#     reasoning (an unusually flat or rising changeup can be as much a
-#     distinct weapon as an unusually diving one) -- but unlike the
-#     curveball call above, this one isn't backed by a clear signal in the
-#     data either way: a PCA check found changeup IVB's own contribution to
-#     the pitch type's dominant axis of variation is weak under BOTH signed
-#     and abs (loadings of -0.18 vs +0.12, both small next to horizontal/
-#     spin which dominate), with next to no difference in variance explained
-#     (34.3% vs 34.0%). Treat this one as a pure philosophy call, not a
-#     data-validated fix the way curveballs/sinkers were.
+#   - Changeups are handled separately from this dict entirely (see
+#     CH_IVB_GAP_WEIGHT / CH_IVB_RAW_WEIGHT below), the same way changeup
+#     velocity already is -- a brief signed_neg -> abs flip lived here for
+#     about an hour on 2026-10 before being replaced by the gap-blend
+#     treatment once it became clear league-relative IVB alone can't
+#     distinguish "mirrors the fastball's shape" from "diverges hard from
+#     it," which is the actual question for a changeup.
 # Defaults to "signed" for any pitch type not listed here.
 IVB_SHAPE = {
     "SL": "abs", "ST": "abs", "SV": "abs", "FC": "abs", "SI": "abs",
-    "CH": "abs", "CU": "abs", "KC": "abs", "FS": "signed_neg",
+    "CU": "abs", "KC": "abs", "FS": "signed_neg",
 }
 
 # Whether velocity should reward being faster ("signed", the default),
@@ -288,6 +285,37 @@ VELO_SHAPE = {
 # instead of one.
 CH_VELO_GAP_WEIGHT = 0.7
 CH_RAW_VELO_WEIGHT = 0.3
+
+# Changeup IVB is scored as the same kind of two-term blend as changeup
+# velocity above, added 2026-10 once it became clear a league-relative shape
+# flag (signed/signed_neg/abs) can't tell "this changeup mirrors its own
+# pitcher's fastball" apart from "this changeup diverges hard from it" --
+# both could have identical league-relative IVB, but they're very different
+# pitches from a deception standpoint:
+#   1. IVB SEPARATION from the pitcher's own fastball baseline (the same
+#      harder-of-FF/SI reference pitch used for the velocity gap above) --
+#      the main signal, and the majority of the weight.
+#   2. Raw changeup IVB itself, league-relative -- a smaller, secondary
+#      term, since a changeup that moves a lot in absolute terms is still
+#      harder to square up on its own merits, independent of what it's
+#      tunneling off of.
+# Unlike the velocity blend, BOTH terms here use abs() before blending,
+# not after: real pitcher data shows changeup IVB has no single "better"
+# direction either for the raw metric (an unusually flat/rising changeup
+# can be as distinct a weapon as an unusually diving one) or for the gap
+# itself (true fastball-mirroring and extreme late divergence are both
+# plausible distinct deception profiles, and there's no outcome data in
+# this model to say one beats the other -- see CH_IVB_GAP_WEIGHT's
+# discussion). Folding each term to a distance BEFORE blending avoids an
+# extreme-positive gap and an extreme-negative raw IVB silently canceling
+# each other out in the blend, the way they could if abs() were applied to
+# the combined signed composite instead.
+# The weights match the velocity blend's split for consistency, with the
+# same caveat the velocity split carries: this is a judgment call, not
+# something empirically fit (there's no outcome data in this model to
+# derive it from).
+CH_IVB_GAP_WEIGHT = 0.7
+CH_IVB_RAW_WEIGHT = 0.3
 
 # Per-pitch-type override for how much horizontal break counts toward the
 # Ceiling formula, in place of the global HORIZ_WEIGHT. Sliders, sweepers,
@@ -826,16 +854,21 @@ def build_delivery_quotients(pitch_metrics_player_ids: pd.Series, delivery: pd.D
     return delivery
 
 
-def build_fastball_baseline(pitch_metrics: pd.DataFrame) -> pd.Series:
+def build_fastball_baseline(pitch_metrics: pd.DataFrame) -> pd.DataFrame:
     """Each pitcher's hardest fastball-family pitch (four-seam or sinker --
     whichever is harder for that pitcher, since either can be the "primary"
     heater a changeup is meant to look like out of the hand) this season.
-    Returns a Series of velocity indexed by player_id; a pitcher who throws
-    neither simply has no entry (handled as a neutral/no-gap-signal case
-    downstream, same philosophy as a pitcher missing from the arm-angle
-    leaderboard getting a neutral delivery modifier rather than a penalty)."""
+    Returns a DataFrame indexed by player_id with that one pitch's velocity
+    AND induced vertical break, both pulled from the SAME fastball row --
+    so a changeup's velocity gap and IVB gap are always measured against
+    the one specific heater it's actually meant to tunnel off of, never an
+    average of two different pitches. A pitcher who throws neither simply
+    has no entry (handled as a neutral/no-gap-signal case downstream, same
+    philosophy as a pitcher missing from the arm-angle leaderboard getting
+    a neutral delivery modifier rather than a penalty)."""
     fastball_rows = pitch_metrics[pitch_metrics["pitch_type"].isin(["FF", "SI"])]
-    return fastball_rows.groupby("player_id")["velo"].max()
+    hardest_idx = fastball_rows.groupby("player_id")["velo"].idxmax()
+    return fastball_rows.loc[hardest_idx].set_index("player_id")[["velo", "ivb_in"]]
 
 
 def compute_pitch_quotients(pitch_metrics: pd.DataFrame, active_spin_fallback: pd.DataFrame,
@@ -869,8 +902,8 @@ def compute_pitch_quotients(pitch_metrics: pd.DataFrame, active_spin_fallback: p
             # season has no baseline to compare against -- treat the gap
             # term as neutral (0) for just those rows rather than penalizing
             # or rewarding on an undefined basis.
-            baseline = group["player_id"].map(fastball_baseline)
-            velo_gap = baseline - group["velo"]
+            baseline_velo = group["player_id"].map(fastball_baseline["velo"])
+            velo_gap = baseline_velo - group["velo"]
             gap_z = zscore(velo_gap).fillna(0.0)
             velo_z = CH_VELO_GAP_WEIGHT * gap_z + CH_RAW_VELO_WEIGHT * velo_z
         elif VELO_SHAPE.get(pt) == "abs":
@@ -878,7 +911,20 @@ def compute_pitch_quotients(pitch_metrics: pd.DataFrame, active_spin_fallback: p
         elif VELO_SHAPE.get(pt) == "signed_neg":
             velo_z = -velo_z
         ivb_z = zscore(group["ivb_in"])
-        if IVB_SHAPE.get(pt) == "abs":
+        if pt == "CH":
+            # Blend IVB-separation-from-own-fastball with raw league-
+            # relative IVB (see CH_IVB_GAP_WEIGHT/CH_IVB_RAW_WEIGHT above),
+            # the same two-signal idea as changeup velocity just above --
+            # except both terms are folded to a distance (abs) before
+            # blending, since neither has a single "better" direction the
+            # way velocity's gap and raw terms do. Same neutral (0) handling
+            # for a pitcher with no qualifying FF/SI baseline.
+            baseline_ivb = group["player_id"].map(fastball_baseline["ivb_in"])
+            ivb_gap = baseline_ivb - group["ivb_in"]
+            ivb_gap_z = zscore(ivb_gap).abs().fillna(0.0)
+            ivb_raw_z = ivb_z.abs()
+            ivb_z = CH_IVB_GAP_WEIGHT * ivb_gap_z + CH_IVB_RAW_WEIGHT * ivb_raw_z
+        elif IVB_SHAPE.get(pt) == "abs":
             ivb_z = ivb_z.abs()
         elif IVB_SHAPE.get(pt) == "signed_neg":
             ivb_z = -ivb_z
