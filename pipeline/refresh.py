@@ -196,30 +196,70 @@ IVB_WEIGHT_BELOW_AVG_OVERRIDE = {
 # compresses the high-carry group without punishing it into irrelevance.
 IVB_WEIGHT_ABOVE_AVG_OVERRIDE = {
     "SI": 0.60,
+    "FC": 0.50,
+}
+
+# The velocity-side counterpart to IVB_WEIGHT_BELOW_AVG_OVERRIDE/
+# IVB_WEIGHT_ABOVE_AVG_OVERRIDE above, for pitch types where VELO_SHAPE is
+# "abs" (see VELO_SHAPE below) AND the pitch type is listed here: velocity
+# gets full (1.0) weight on rows AT OR ABOVE league-average velocity, and
+# this discounted weight on rows BELOW average. Added for FC (2026-10 model
+# review, right after FC's IVB override above) for the same reason FF
+# needed a below-average IVB discount: real cutters get genuine value from
+# being unusually hard (velocity itself is part of the weapon, tunneling
+# off a mid-90s fastball), so a below-average-velocity cutter -- even a
+# real, distinct depth-archetype one (see VELO_SHAPE's docstring) -- is
+# still generally a lesser weapon than an equally-unusual hard one, and
+# shouldn't be credited equally. Settled on jointly with IVB's 0.50 above
+# (not independently) via repeated spot-checks on named pitchers at both
+# extremes: an elite, near-exclusively-used high-carry cutter (Kenley
+# Jansen, 82.8% usage -- the single highest usage rate of any cutter in the
+# 2026 sample) and a low-usage, no-other-metric-corroborated depth cutter
+# (Kolby Allard) were the two real-world cases driving the final choice --
+# both remain clearly above-average at 0.50/0.50 without either dominating
+# the leaderboard the way the uncompressed (1.0/0.95) version let them.
+# Also confirmed via component-level breakdown that neither pitcher's score
+# is actually being driven primarily by this lever: Jansen's is driven at
+# least as much by his extreme usage rate (a separate, model-wide lever --
+# USAGE_RATE_EXPONENT -- not anything FC-specific), and Allard's by several
+# moderately-unusual components (velocity, IVB, horizontal) compounding at
+# once rather than any single extreme reading. 0.50 was chosen from a
+# sweep of 0.95/0.80/0.65/0.60/0.55/0.50/0.45/0.35/0.20/0.0, both on its own
+# and jointly with IVB's discount, balancing "nobody moves >=10 vs. the
+# uncompressed version" against still giving the depth archetype (and
+# Jansen's high-carry counterpart) a real, visible compression.
+VELO_WEIGHT_BELOW_AVG_OVERRIDE = {
+    "FC": 0.50,
 }
 
 # ---------------------------------------------------------------------------
 # OPEN ITEM (2026-10 model review): per-pitch-type re-weighting, paused.
 #
 # IVB_WEIGHT/HORIZ_WEIGHT/ACTIVE_SPIN_WEIGHT above are still blanket/
-# hand-picked values (aside from FF's IVB, resolved above) -- a PCA pass
-# against the real 2026-season `pitch_metrics` table (PC1 loadings
+# hand-picked values for the pitch types below (FF, SI, and FC's weights
+# are now resolved -- see IVB_WEIGHT_BELOW_AVG_OVERRIDE/
+# IVB_WEIGHT_ABOVE_AVG_OVERRIDE/VELO_WEIGHT_BELOW_AVG_OVERRIDE above) -- a
+# PCA pass against the real 2026-season `pitch_metrics` table (PC1 loadings
 # normalized to velocity, which has no configurable weight of its own)
 # produced candidate per-pitch-type replacements, but we deliberately
 # deferred applying them pending further validation. Only the SHAPE changes
 # from that same review went in at the time (see IVB_SHAPE/HORIZ_SHAPE/
-# VELO_SHAPE above and ACTIVE_SPIN_SHAPE below); FF's weight was resolved
-# separately and directly above, going pitch-by-pitch rather than from this
-# batch of PCA candidates (FF's own PC1 only explained ~38% of variance,
-# with PC2/PC3 close behind at ~28%/~20% -- no single dominant archetype to
-# derive a trustworthy ratio from, so a PCA-ratio reweight was skipped for
-# FF specifically; see the dedicated FF review for the full writeup).
+# VELO_SHAPE above and ACTIVE_SPIN_SHAPE below); FF, SI, and FC's weights
+# were each resolved separately and directly above, going pitch-by-pitch
+# rather than from this batch of PCA candidates -- none of the three had a
+# single dominant PCA archetype to derive a trustworthy ratio from (FF's
+# PC1/2/3 were 38%/28%/20%; SI's were 37%/31%/17%/16%; FC's were
+# 33%/31%/23%/14%, with FC's PC3 specifically flagging the Rasmussen-style
+# depth archetype discussed below), so a straight PCA-ratio reweight was
+# skipped for all three in favor of real-example-driven conditional
+# weights instead; see each pitch type's dedicated review for the full
+# writeup.
 #
-# Candidate weights from the PCA pass, for when we pick the rest of these
-# back up (SI next, most likely, given FF is now done):
-#   IVB_WEIGHT_OVERRIDE:   SI 1.10, FC 0.24, CU/KC 1.22, SL 0.54, ST 1.46
-#   HORIZ_WEIGHT_OVERRIDE: SI 0.25, FC 0.15, CU/KC 0.14, SL 0.49, ST 1.56, SV 0.5 (unchanged)
-#   ACTIVE_SPIN_WEIGHT:    SI 0.05, FC 0.03, CU/KC 0.11, SL 0.06, ST 0.23, SV 0.10 (unchanged)
+# Candidate weights from the PCA pass, for the remaining untouched pitch
+# types (CU/KC next, most likely, given FF/SI/FC are now done):
+#   IVB_WEIGHT_OVERRIDE:   CU/KC 1.22, SL 0.54, ST 1.46
+#   HORIZ_WEIGHT_OVERRIDE: CU/KC 0.14, SL 0.49, ST 1.56, SV 0.5 (unchanged)
+#   ACTIVE_SPIN_WEIGHT:    CU/KC 0.11, SL 0.06, ST 0.23, SV 0.10 (unchanged)
 # (CH/FS/FO/CS left untouched in all three -- CH/FS because raw velocity
 # barely loads on their dominant axis of variation, making a PCA-derived
 # ratio-to-velocity unstable there; FO/CS because the season sample is only
@@ -229,17 +269,11 @@ IVB_WEIGHT_ABOVE_AVG_OVERRIDE = {
 # the numbers above:
 #   - PC1-only captures each pitch type's DOMINANT shared axis of variation,
 #     not every real archetype -- the exact issue that sank a PCA-ratio
-#     approach for FF above. Checked PC2/PC3 for FC and found IVB loads
-#     weakly on PC1 (hence the proposed 0.24, a big cut from 0.95) but
-#     strongly on PC3 (0.92, a separate ~19% of variance) -- almost
-#     certainly where an outlier like a Rasmussen-style depth-is-the-whole-
-#     pitch cutter lives, which this docstring already names as the reason
-#     IVB matters for cutters. A pure PC1 reweight would systematically
-#     undersell that archetype. ST showed a smaller version of the same
-#     pattern. Worth deciding whether to live with that (PC1 = "the common
-#     case") or address it directly (e.g. a two-component blend, or an
-#     asymmetric conditional weight like FF's above) before shipping any
-#     weight change derived this way.
+#     approach for FF/SI/FC above. ST showed a similar pattern to FC's (a
+#     real, non-trivial PC3). Worth deciding whether to live with that
+#     (PC1 = "the common case") or address it directly (e.g. a
+#     two-component blend, or an asymmetric conditional weight like
+#     FF/SI/FC's above) before shipping any weight change derived this way.
 #   - ST's candidate change is the most aggressive of the batch and the
 #     least certain: its horizontal weight would more than double, on top of
 #     a shape flip, on top of a velocity shape flip whose own PCA signal was
@@ -255,6 +289,10 @@ IVB_WEIGHT_ABOVE_AVG_OVERRIDE = {
 #     pitchers league-wide throw a tracked slow curve this season, so any
 #     shape or weight call there (velocity/IVB/horizontal -> abs was floated
 #     earlier) is pure analogy to CU/SL, never PCA-validated.
+#   - Active spin % and IVB are highly correlated for FC specifically
+#     (Pearson 0.86 in the real 2026 data) -- flagged during the FC pass but
+#     deliberately left unresolved pending a broader, cross-pitch-type
+#     conversation about active spin's role generally, not just for cutters.
 # ---------------------------------------------------------------------------
 
 # usage_rate is dampened with an exponent < 1 rather than applied linearly.
@@ -350,8 +388,24 @@ IVB_SHAPE = {
 # to be different: what makes a changeup deceptive is largely its velocity
 # SEPARATION from the pitcher's OWN fastball, not just being fast or slow in
 # some absolute, cross-pitcher sense the way curves/sliders/splitters are.
+#
+# Cutters switched signed -> abs (2026-10 model review, FC pass): a fresh
+# PCA pass found FC's variance splits ~evenly across 3-4 components (no
+# dominant archetype, same issue as FF/SI), but flagged a real, substantial
+# axis (PC3, ~23% of variance) that's almost purely IVB-driven and nearly
+# independent of velocity -- the "depth is the whole pitch" archetype this
+# file's IVB_SHAPE docstring already names (a Rasmussen-style cutter).
+# Checking real examples confirmed IVB's existing "abs" shape already
+# credits that archetype correctly and symmetrically (extreme-depth
+# cutters' IVB z-score is just as large as extreme-carry cutters'), but
+# the signed velocity term was silently canceling most of that credit out
+# -- real extreme-depth cutters in the data are mostly thrown notably
+# SLOWER than average, so the old "faster always rewarded" shape was
+# penalizing the exact pitchers PC3 said should be recognized. Same "both
+# extremes can be elite" logic as CU/KC/FS above: a firm, hard cutter and
+# a slow, loopy, slider-like one can both be distinct weapons.
 VELO_SHAPE = {
-    "CU": "abs", "KC": "abs", "FS": "abs",
+    "CU": "abs", "KC": "abs", "FS": "abs", "FC": "abs",
 }
 
 # Changeup velocity is scored as a blend of two things, rather than a single
@@ -1047,7 +1101,10 @@ def compute_pitch_quotients(pitch_metrics: pd.DataFrame, active_spin_fallback: p
         group["active_spin_quotient"] = active_spin_quotient(
             group["active_spin_pct"], ACTIVE_SPIN_SHAPE.get(pt)
         )
-        velo_z = zscore(group["velo"])
+        velo_z_raw = zscore(group["velo"])  # kept pre-abs/pre-sign-flip: VELO_WEIGHT_BELOW_AVG_OVERRIDE
+                                             # needs to know which rows were below league average
+                                             # BEFORE any shape transform collapses that information.
+        velo_z = velo_z_raw
         if pt == "CH":
             # Blend velocity-separation-from-own-fastball with raw velocity
             # (see CH_VELO_GAP_WEIGHT/CH_RAW_VELO_WEIGHT above) instead of a
@@ -1115,8 +1172,21 @@ def compute_pitch_quotients(pitch_metrics: pd.DataFrame, active_spin_fallback: p
         else:
             ivb_weight = IVB_WEIGHT
 
+        # Velocity's own conditional weight, the mirror of the IVB one just
+        # above -- see VELO_WEIGHT_BELOW_AVG_OVERRIDE's definition for the
+        # reasoning. Only a below-average-side override dict exists for
+        # velocity so far (FC); unlike IVB there's no pitch type yet needing
+        # the opposite (above-average velocity discounted), so there's no
+        # analogous "above_avg_velo_weight" branch here.
+        below_avg_velo_weight = VELO_WEIGHT_BELOW_AVG_OVERRIDE.get(pt)
+        if pt != "CH" and below_avg_velo_weight is not None:
+            velo_weight = pd.Series(1.0, index=group.index)
+            velo_weight[velo_z_raw < 0] = below_avg_velo_weight
+        else:
+            velo_weight = 1.0
+
         ceiling = (
-            velo_z
+            velo_weight * velo_z
             + ivb_weight * ivb_z
             + horiz_weight * horiz_z
             + SPIN_WEIGHT * spin_z
@@ -1213,7 +1283,11 @@ def compute_daily_display_scores(daily_agg: pd.DataFrame, pitch_metrics: pd.Data
             continue
         day_group = day_group.copy()
 
-        velo_z = _season_pop_zscore(day_group["velo"], season_group["velo"])
+        velo_z_raw = _season_pop_zscore(day_group["velo"], season_group["velo"])  # kept pre-shape,
+                                              # same reason as compute_pitch_quotients: needed to know
+                                              # which rows are below the SEASON average velocity before
+                                              # any abs()/sign-flip collapses that information.
+        velo_z = velo_z_raw
         if pt == "CH":
             baseline_velo = day_group["player_id"].map(fastball_baseline["velo"])
             day_velo_gap = baseline_velo - day_group["velo"]
@@ -1269,8 +1343,20 @@ def compute_daily_display_scores(daily_agg: pd.DataFrame, pitch_metrics: pd.Data
         else:
             ivb_weight = IVB_WEIGHT
 
+        # Same per-row conditional velocity weight as compute_pitch_quotients
+        # -- see VELO_WEIGHT_BELOW_AVG_OVERRIDE's definition for the
+        # reasoning. "Below average" here means relative to the SEASON
+        # population's mean, consistent with every other z-score in this
+        # daily function.
+        below_avg_velo_weight = VELO_WEIGHT_BELOW_AVG_OVERRIDE.get(pt)
+        if pt != "CH" and below_avg_velo_weight is not None:
+            velo_weight = pd.Series(1.0, index=day_group.index)
+            velo_weight[velo_z_raw < 0] = below_avg_velo_weight
+        else:
+            velo_weight = 1.0
+
         day_group["ceiling"] = (
-            velo_z + ivb_weight * ivb_z + horiz_weight * horiz_z + SPIN_WEIGHT * spin_z
+            velo_weight * velo_z + ivb_weight * ivb_z + horiz_weight * horiz_z + SPIN_WEIGHT * spin_z
         )
 
         day_group = day_group.merge(
