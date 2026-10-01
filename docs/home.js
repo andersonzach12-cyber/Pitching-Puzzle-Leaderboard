@@ -148,17 +148,29 @@ async function fetchMovers() {
     })
     .filter((r) => r && !Number.isNaN(r.delta));
 
-  const gainers = [...withDelta].sort((a, b) => b.delta - a.delta).slice(0, 5);
-  const decliners = [...withDelta].sort((a, b) => a.delta - b.delta).slice(0, 5);
-  return { gainers, decliners };
+  return biggestMovers(withDelta);
 }
 
-function renderMoverBox(title, rows, deltaClass) {
+const MOVERS_TOP_N = 8;
+
+// A single "biggest movers" list, ranked by the SIZE of the change either
+// direction -- a -24 and a +24 are equally notable swings -- rather than
+// two separate top-5 gainers/decliners lists. Direction is kept on each row
+// (as `up`) so the caller can still style/arrow it.
+function biggestMovers(withDelta) {
+  return [...withDelta]
+    .sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta))
+    .slice(0, MOVERS_TOP_N)
+    .map((r) => ({ ...r, up: r.delta > 0 }));
+}
+
+function renderMoverBox(title, rows) {
   const items = rows.map((r) => `
     <li>
+      <span class="mover-arrow ${r.up ? "mover-up" : "mover-down"}" aria-hidden="true">${r.up ? "&#9650;" : "&#9660;"}</span>
       <a class="mover-name" href="${playerProfileUrl(r.player_id, r.pitcher_name)}">${escapeHtml(r.pitcher_name || "")}</a>
       <span class="mover-pitch">${escapeHtml(PITCH_LABELS[r.pitch_type] || r.pitch_type)}</span>
-      <span class="mover-delta ${deltaClass}">${formatDelta(r.delta)}</span>
+      <span class="mover-delta ${r.up ? "mover-up" : "mover-down"}">${formatDelta(r.delta)}</span>
     </li>
   `).join("");
 
@@ -376,7 +388,7 @@ async function loadHome() {
       Promise.all(HOME_PITCH_TYPES.map((pt) => fetchTopN(pt).then((rows) => ({ pt, rows })))),
       fetchMovers().catch((err) => {
         console.error(err);
-        return { gainers: [], decliners: [] };
+        return [];
       }),
       fetchWatchList().catch((err) => {
         console.error(err);
@@ -385,8 +397,7 @@ async function loadHome() {
     ]);
     grid.innerHTML = pitchResults.map(({ pt, rows }) => renderCard(pt, rows)).join("");
     moversRow.innerHTML =
-      renderMoverBox("Past Week's Biggest Gainers", movers.gainers, "mover-up") +
-      renderMoverBox("Past Week's Biggest Decliners", movers.decliners, "mover-down") +
+      renderMoverBox("Past Week's Biggest Movers", movers) +
       renderWatchBox(watchList);
     status.textContent = "";
   } catch (err) {
