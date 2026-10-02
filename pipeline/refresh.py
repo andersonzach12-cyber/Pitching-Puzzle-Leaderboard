@@ -370,6 +370,7 @@ VELO_WEIGHT_BELOW_AVG_OVERRIDE = {
     "CU": 0.60,
     "KC": 0.60,
     "SL": 0.35,
+    "ST": 0.25,
 }
 
 # SL's 0.35 (see VELO_SHAPE's SL note above for the full "abs" shape
@@ -397,6 +398,36 @@ VELO_WEIGHT_BELOW_AVG_OVERRIDE = {
 # small, uniform -2 to -4 point nudges (the expected cost of no longer
 # getting full "signed" credit for throwing hard), confirming the change
 # tracks as intended rather than disturbing an unrelated archetype.
+#
+# ST's 0.25 (see VELO_SHAPE's ST note above for the "abs" shape rationale
+# and the double-counting counter-argument) was chosen from a full sweep of
+# candidate discounts (0.35 down to 0.0, plus negative values tested and
+# rejected -- see below) against the final, post-reclassification ST
+# population (301 qualifying rows):
+#   discount  mean|delta|  max|delta|  moved>=10   Manaea(640455)  Yarbrough(642232)  Cosgrove(676680)  Palmquist(687223)
+#     0.35       5.39          57          27         58->97          75->124           72->128            42->99
+#     0.30       5.21          55          27         58->95          75->122           72->126            42->97
+#     0.25       5.02          52          27         58->93          75->121           72->123            42->94
+#     0.20       4.77          49          26         58->92          75->119           72->121            42->91
+#     0.10       4.40          45          24         58->88          75->115           72->117            42->86
+#     0.0        4.03          40          21         58->84          75->111           72->112            42->81
+# Negative discounts were also tested (pushing below-average ST velocity
+# into active penalty territory again, rather than just zero credit) but
+# explicitly rejected: at discount=-1.0 the below-average side is
+# mathematically identical to the old "signed" shape (mean|delta| drops to
+# 0.00 -- a full round trip back to the pre-change baseline), confirming
+# that going negative at all just partially re-introduces the exact
+# behavior the "abs" switch was meant to fix. Unlike FC/CU/KC, 0.0 itself
+# still carries a large legitimate correction (removing "signed"'s old
+# penalty on real slow-sweeper outliers, same mechanical pattern as SL), so
+# 0.25 was chosen -- slightly below SL's 0.35 -- as a deliberately more
+# conservative discretionary credit above that 0.0 floor, directly
+# reflecting the stated skepticism that most slow sweepers hold up as a
+# broad archetype the way slow sliders/curves do: it keeps the named
+# deceptive-lefty group's gains in the 35-52 point range rather than the
+# 39-57 point range at 0.35, while Meyer stays pinned at ~130-132 across the
+# entire sweep regardless of setting, confirming the change is isolated to
+# the below-average side as intended.
 
 # ---------------------------------------------------------------------------
 # OPEN ITEM (2026-10 model review): per-pitch-type re-weighting, paused.
@@ -692,8 +723,35 @@ IVB_SHAPE = {
 # setting that reduces Sale/Corbin-magnitude moves to single digits; the
 # discount below (0.35) is a deliberate, conservative choice above that 0.0
 # floor, not an attempt to minimize the swing further.
+#
+# Sweepers switched signed -> abs (2026-10 model review, ST pass, done after
+# the SL pass above and after both the SL<->ST hand reclassifications --
+# see SL_TO_ST_RECLASSIFY/ST_TO_SL_RECLASSIFY): tested against the final,
+# post-reclassification ST population (301 rows, velo mean 82.4/std 2.8).
+# "abs" was chosen over "signed_neg" (full reversal, rewarding slow and
+# penalizing fast) -- signed_neg was conclusively rejected: it scrambled the
+# leaderboard (Spearman -0.10 vs the old signed baseline, mean |delta| 10.61,
+# 121/301 movers >=10) and specifically punished known elite power-sweeper
+# archetypes (Max Meyer, 89.0mph, 676974: 130 -> 84, a 46-point drop), with
+# no corresponding upside -- there's no real-world case that a hard sweeper
+# is WORSE for being hard. "abs" protects Meyer (stays ~130-133 across every
+# discount tested) while still recognizing deceptive, known soft-sweeper
+# archetypes the old "signed" shape was penalizing (Sean Manaea 640455,
+# Ryan Yarbrough 642232, Tom Cosgrove 676680, Carson Palmquist 687223 --
+# all pitchers with a broader reputation for success via deception/funk
+# rather than velocity).
+#
+# Unlike SL, this one came with a real, explicit counter-argument that was
+# evaluated before shipping: ST's velo and horizontal_in are correlated at
+# r=0.30 in this population, a moderate "double-counting" risk (a slow
+# sweeper may already be credited for the same velocity/movement tradeoff
+# via the boosted horizontal weight). r=0.30 was judged suggestive but not
+# dominant, and the named-archetype evidence (Meyer protected, known
+# deceptive-lefty group correctly recognized) was judged to outweigh it --
+# but see the discount choice below for how that skepticism was still
+# incorporated.
 VELO_SHAPE = {
-    "CU": "abs", "KC": "abs", "FS": "abs", "FC": "abs", "SL": "abs",
+    "CU": "abs", "KC": "abs", "FS": "abs", "FC": "abs", "SL": "abs", "ST": "abs",
 }
 
 # Changeup velocity is scored as a blend of two things, rather than a single
