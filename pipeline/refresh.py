@@ -971,6 +971,53 @@ CH_RAW_VELO_WEIGHT = 0.4
 CH_IVB_GAP_WEIGHT = 0.7
 CH_IVB_RAW_WEIGHT = 0.3
 
+# Follow-up (2026-10, same review pass as the velocity residualization
+# above): measuring the two abs'd terms directly (the rigorous test, not
+# a population-wide raw-metric correlation) found a real but much milder
+# version of velocity's problem -- r=0.359 (R^2=0.129) between the blended
+# gap and raw terms, vs. velocity's r=-0.70. The abs()-before-blending
+# design above is already doing real work here; this isn't a double-
+# counting bug that forces a fix the way velocity's was.
+#
+# What IS real: almost every changeup drops less than its own pitcher's
+# fastball (mean gap ~9.8in across the 398 CH pitchers with a qualifying
+# FF/SI baseline; only 2 have a negative gap at all). That means an
+# unusually flat/rising changeup (high raw IVB) and an unusually diving
+# one (low raw IVB) are NOT symmetric cases the way the abs()-both-terms
+# design assumes -- a diving outlier mechanically pulls a big gap too,
+# while a flat/rising outlier doesn't get the same boost, since the gap
+# just regresses toward "normal for a changeup," never below zero. On top
+# of that, real scouting consensus treats the two sides asymmetrically on
+# the merits: depth/fade is what makes a changeup play off the fastball,
+# so an extremely flat/rising one (closer to a "show-me" pitch -- real
+# examples in this population: Cease, Manoah, Gaddis) is generally a
+# lesser weapon than an extremely diving one (Logan Webb's, a legitimately
+# elite, famous changeup, sits at the extreme diving end).
+#
+# This is the same tension IVB_WEIGHT_BELOW_AVG_OVERRIDE (FF) and
+# IVB_WEIGHT_ABOVE_AVG_OVERRIDE (SI/FC) above were built for -- one side
+# of a movement metric is the more characteristic, more valued shape for
+# that pitch type, so it keeps full weight while the other side is
+# discounted rather than credited equally. CH's IVB term isn't a plain
+# shape-flagged z-score like those (it's already a two-term blend), so
+# the discount is applied to CH_IVB_RAW_WEIGHT's raw sub-term specifically
+# (the piece structurally equivalent to FF/SI's single term), on rows
+# where raw IVB is above the CH population average (flat/rising) -- the
+# gap term (0.7 weight) is untouched either way, since it isn't the
+# term with the asymmetry.
+#
+# 0.5 was chosen by sweeping 1.0 (no discount) down to 0.0 (zero credit
+# for flat/rising raw IVB) against the real 2026 CH population and
+# spot-checking named pitchers at each step. Effects at 0.5: the most
+# extreme flat/rising cases move down meaningfully (Cease -0.43, Manoah
+# -0.17, Gaddis -0.17 on the blended ivb_z scale), modest flat/rising
+# cases barely move (Misiorowski/Murphy -0.03, Urena -0.03 -- flat/rising
+# in sign only, not in magnitude), and every diving-side pitcher is
+# completely untouched (Morejon, Duran, Munoz, Doval, Cabrera, Yoho all
+# delta=0.00), confirming the discount only bites the side and the
+# magnitude it's meant to.
+CH_IVB_RAW_ABOVE_AVG_DISCOUNT = 0.5
+
 # Per-pitch-type override for how much horizontal break counts toward the
 # Ceiling formula, in place of the global HORIZ_WEIGHT. Sliders, sweepers,
 # and slurves get real, distinct value from horizontal movement
@@ -1761,11 +1808,17 @@ def compute_pitch_quotients(pitch_metrics: pd.DataFrame, active_spin_fallback: p
             # blending, since neither has a single "better" direction the
             # way velocity's gap and raw terms do. Same neutral (0) handling
             # for a pitcher with no qualifying FF/SI baseline.
+            # Raw term's weight is discounted on the flat/rising side only
+            # (ivb_z_raw > 0, i.e. above league-average CH IVB) -- see
+            # CH_IVB_RAW_ABOVE_AVG_DISCOUNT's definition above for the full
+            # rationale. The gap term keeps full weight on both sides.
             baseline_ivb = group["player_id"].map(fastball_baseline["ivb_in"])
             ivb_gap = baseline_ivb - group["ivb_in"]
             ivb_gap_z = zscore(ivb_gap).abs().fillna(0.0)
             ivb_raw_z = ivb_z.abs()
-            ivb_z = CH_IVB_GAP_WEIGHT * ivb_gap_z + CH_IVB_RAW_WEIGHT * ivb_raw_z
+            ivb_raw_weight = pd.Series(CH_IVB_RAW_WEIGHT, index=group.index)
+            ivb_raw_weight[ivb_z_raw > 0] = CH_IVB_RAW_WEIGHT * CH_IVB_RAW_ABOVE_AVG_DISCOUNT
+            ivb_z = CH_IVB_GAP_WEIGHT * ivb_gap_z + ivb_raw_weight * ivb_raw_z
         elif IVB_SHAPE.get(pt) == "abs":
             ivb_z = ivb_z.abs()
         elif IVB_SHAPE.get(pt) == "signed_neg":
@@ -1963,12 +2016,21 @@ def compute_daily_display_scores(daily_agg: pd.DataFrame, pitch_metrics: pd.Data
                                               # abs()/sign-flip collapses that information.
         ivb_z = ivb_z_raw
         if pt == "CH":
+            # Raw term's weight is discounted on the flat/rising side only
+            # -- see CH_IVB_RAW_ABOVE_AVG_DISCOUNT's definition in
+            # compute_pitch_quotients for the full rationale. ivb_z_raw
+            # here is already z-scored against the SEASON population
+            # (above), so the above/below-average check is on the same
+            # yardstick as compute_pitch_quotients uses.
             baseline_ivb = day_group["player_id"].map(fastball_baseline["ivb_in"])
             day_ivb_gap = baseline_ivb - day_group["ivb_in"]
             season_baseline_ivb = season_group["player_id"].map(fastball_baseline["ivb_in"])
             season_ivb_gap = season_baseline_ivb - season_group["ivb_in"]
             ivb_gap_z = _season_pop_zscore(day_ivb_gap, season_ivb_gap).abs().fillna(0.0)
-            ivb_z = CH_IVB_GAP_WEIGHT * ivb_gap_z + CH_IVB_RAW_WEIGHT * ivb_z.abs()
+            ivb_raw_z = ivb_z.abs()
+            ivb_raw_weight = pd.Series(CH_IVB_RAW_WEIGHT, index=day_group.index)
+            ivb_raw_weight[ivb_z_raw > 0] = CH_IVB_RAW_WEIGHT * CH_IVB_RAW_ABOVE_AVG_DISCOUNT
+            ivb_z = CH_IVB_GAP_WEIGHT * ivb_gap_z + ivb_raw_weight * ivb_raw_z
         elif IVB_SHAPE.get(pt) == "abs":
             ivb_z = ivb_z.abs()
         elif IVB_SHAPE.get(pt) == "signed_neg":
