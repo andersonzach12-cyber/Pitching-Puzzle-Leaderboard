@@ -396,6 +396,44 @@ USAGE_RATE_EXPONENT = 0.75
 # transparency/debugging.
 MEDIAN_ARSENAL_SIZE = 4
 
+# MIN_PITCHES (25, season-long per pitch type) was designed purely as a
+# DISPLAY filter -- "is there enough sample to trust showing this pitch its
+# own quotient at all." Before Option C, that's all it affected. Now that
+# arsenal_size feeds effective_usage for EVERY pitch a pitcher throws, that
+# same 25-pitch bar was also silently deciding how much credit a pitcher's
+# OTHER pitches get -- and 25 pitches across a full season is a low bar for
+# "this is a real weapon broadening the arsenal" vs. a show-me pitch that
+# happens to clear the display floor. Confirmed on real 2026 data: Drew
+# Rasmussen's 6-pitch arsenal counted a 3.5%-usage CU and a 2.6%-usage ST
+# that are barely thrown at all; his real, meaningfully-used arsenal is 4
+# pitches, and his FC credit was inflated from 109 to 116 by the two
+# nominal ones. Aaron Ashby's "5-pitch" arsenal similarly counted a
+# 1.8%-usage show-me FF.
+#
+# MIN_ARSENAL_USAGE_RATE adds a SEPARATE, higher bar that a pitch type must
+# clear to count toward a pitcher's arsenal_size specifically -- it still
+# gets its own displayed quotient at MIN_PITCHES, it just doesn't inflate
+# credit on the pitcher's OTHER pitches. Deliberately usage_rate-based
+# rather than a second raw-count threshold: usage_rate already normalizes
+# for how many total pitches that pitcher threw all season (a raw count
+# doesn't -- 25 pitches means something different for a 300-pitch reliever
+# than a 900-pitch workhorse starter), and n_pitches/total_pitches aren't
+# retained anywhere downstream of the initial aggregation step, so a
+# usage-rate floor was also the only one testable against the real
+# pipeline without threading raw counts further through it.
+#
+# 0.035 (vs. 0.05 and 0.08, also tested) was chosen as the more surgical of
+# the candidates: it still catches the two motivating cases above
+# (Rasmussen's CU/ST, Ashby's FF all fall below it) while leaving more
+# borderline-but-real arsenals untouched than a higher bar would -- e.g.
+# Javier Assad's genuine 7-pitch mix (thinnest pitch at 3.7% usage) stays
+# intact at 0.035 but would have been clipped to 6 at 0.05. Population-wide
+# effect at 0.035: only 70 of 720 pitchers (vs. 140 at 0.05) see their
+# arsenal_size change at all, mean |display-score delta| across every row
+# is 0.21, and only one pitcher (Roki Sasaki's SL, arsenal 5->3) moves by
+# more than single digits (129->116).
+MIN_ARSENAL_USAGE_RATE = 0.035
+
 # Whether induced vertical break should reward a specific direction
 # ("signed" -- more "ride"/less drop rewarded, the default), the opposite
 # direction ("signed_neg" -- more drop rewarded), or distance from
@@ -1172,7 +1210,19 @@ def compute_pitch_quotients(pitch_metrics: pd.DataFrame, active_spin_fallback: p
     # player_id/pitch_type) before any merge below, so it reflects each
     # pitcher's real qualifying arsenal regardless of what active-spin or
     # delivery data is or isn't available for them.
-    df["arsenal_size"] = df["player_id"].map(df.groupby("player_id")["pitch_type"].nunique())
+    #
+    # Only pitch types clearing MIN_ARSENAL_USAGE_RATE count toward
+    # arsenal_size (see its definition above) -- a pitch below that bar
+    # still gets its own row/quotient/display_score below, it just doesn't
+    # inflate credit on the pitcher's OTHER pitches by counting as part of
+    # a "broad arsenal." fillna(1) covers the (practically unreachable,
+    # since usage_rate sums to 1.0 across a real pitcher's arsenal) edge
+    # case of a player with zero pitches clearing the bar at all.
+    arsenal_counts = (
+        df[df["usage_rate"] >= MIN_ARSENAL_USAGE_RATE]
+        .groupby("player_id")["pitch_type"].nunique()
+    )
+    df["arsenal_size"] = df["player_id"].map(arsenal_counts).fillna(1).astype(int)
     df["effective_usage"] = df["usage_rate"] * (df["arsenal_size"] / MEDIAN_ARSENAL_SIZE)
 
     if not active_spin_fallback.empty:
