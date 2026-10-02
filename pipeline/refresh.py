@@ -312,6 +312,50 @@ VELO_WEIGHT_BELOW_AVG_OVERRIDE = {
 # live results call for it.
 USAGE_RATE_EXPONENT = 0.75
 
+# Option C (2026-10 usage-rate review): usage_rate itself conflates "how
+# much a pitcher trusts/leans on this pitch" with "how many other pitch
+# types compete for a share of their mix" -- across the real 2026 dataset
+# (720 qualifying pitchers), usage_rate correlates -0.463 with arsenal_size
+# (the pitcher's own count of qualifying pitch types). A 2-3 pitch reliever
+# is structurally pushed toward extreme single-pitch usage shares that a
+# 5-6 pitch starter can never produce, independent of real "trust" in the
+# pitch -- raising or lowering USAGE_RATE_EXPONENT can't fix this, since it
+# barely touches the extreme tail of the usage distribution where this
+# confound matters most (tested at 0.65/0.55/0.45: even an aggressive 0.45
+# only moved a usage=0.828 case from 179->161, still rank 1/284). A hard
+# cap on raw usage_rate before the exponent was also tested and rejected as
+# arbitrary -- no principled reason for one cap value over another.
+# effective_usage instead rescales usage_rate by the ratio of a pitcher's
+# own arsenal_size to MEDIAN_ARSENAL_SIZE: narrow-arsenal pitchers get
+# scaled down (correcting the inflation), broad-arsenal pitchers get scaled
+# up (crediting real usage spread across more pitches), and a pitcher at
+# exactly the median arsenal size is unaffected. Explicitly decided LINEAR
+# (the ratio is applied directly, not dampened through sqrt or another
+# sub-linear exponent) and MEDIAN_ARSENAL_SIZE=4 as a single GLOBAL
+# reference point (the dataset's actual median arsenal_size) rather than a
+# role-specific one. A role-bucketed alternative -- grouping pitchers into
+# narrow/typical/broad arsenal buckets and normalizing each against their
+# OWN bucket's median instead of one global median -- was tested and
+# rejected: it nearly cancels the correction for exactly the narrow-arsenal
+# cases that motivated this work (e.g. a 3-pitch reliever's own bucket
+# median is 3, producing a ~1.0 no-op ratio), because it uses arsenal_size
+# both to define the grouping and as the thing being corrected -- a
+# genuine role-aware version would need an external role signal (e.g.
+# starter/reliever), which doesn't exist anywhere in the pipeline's data.
+# Spot-tested by name against the full ~700-pitcher 2026 population before
+# shipping: narrow-arsenal, high-usage relievers (2-3 pitch arsenals,
+# 65-83% single-pitch usage -- e.g. Ben Joyce, Tyler Rogers, Kenley Jansen)
+# lost 11-17 display-score points on their primary pitch, while
+# broad-arsenal starters (5-6 pitches -- e.g. Drew Rasmussen, Yoshinobu
+# Yamamoto, Aaron Ashby) gained 3-7 points on pitches where they still show
+# real usage -- the intended direction in both cases, and proportional to
+# how extreme the usage reading actually is (not a blanket penalty on
+# every narrow arsenal regardless of usage level). effective_usage replaces
+# usage_rate everywhere usage_rate previously fed the quotient formula;
+# usage_rate itself is left unchanged in the output and still reported for
+# transparency/debugging.
+MEDIAN_ARSENAL_SIZE = 4
+
 # Whether induced vertical break should reward a specific direction
 # ("signed" -- more "ride"/less drop rewarded, the default), the opposite
 # direction ("signed_neg" -- more drop rewarded), or distance from
@@ -1082,6 +1126,15 @@ def compute_pitch_quotients(pitch_metrics: pd.DataFrame, active_spin_fallback: p
                              delivery_modifiers: pd.DataFrame) -> pd.DataFrame:
     df = pitch_metrics.copy()
 
+    # arsenal_size/effective_usage -- see MEDIAN_ARSENAL_SIZE's definition
+    # above (Option C, 2026-10 usage-rate review) for the full rationale.
+    # Computed from this same pitch_metrics frame (one row per qualifying
+    # player_id/pitch_type) before any merge below, so it reflects each
+    # pitcher's real qualifying arsenal regardless of what active-spin or
+    # delivery data is or isn't available for them.
+    df["arsenal_size"] = df["player_id"].map(df.groupby("player_id")["pitch_type"].nunique())
+    df["effective_usage"] = df["usage_rate"] * (df["arsenal_size"] / MEDIAN_ARSENAL_SIZE)
+
     if not active_spin_fallback.empty:
         df = df.merge(
             active_spin_fallback, on=["player_id", "pitch_type"], how="left", suffixes=("", "_fallback")
@@ -1198,7 +1251,7 @@ def compute_pitch_quotients(pitch_metrics: pd.DataFrame, active_spin_fallback: p
         # every pitch type, rather than only to a composite pitcher score.
         #
         group["quotient"] = (
-            ceiling * (group["usage_rate"] ** USAGE_RATE_EXPONENT) * group["delivery_modifier"]
+            ceiling * (group["effective_usage"] ** USAGE_RATE_EXPONENT) * group["delivery_modifier"]
         )
         # display_score: the same information as quotient, just rescaled onto
         # a "100 = league average for this pitch type" scale (like Stuff+/
@@ -1218,8 +1271,8 @@ def compute_pitch_quotients(pitch_metrics: pd.DataFrame, active_spin_fallback: p
     result = pd.concat(out_frames, ignore_index=True)
     return result[[
         "player_id", "pitch_type", "velo", "ivb_in", "horizontal_in", "spin_rpm",
-        "active_spin_pct", "usage_rate", "active_spin_quotient", "delivery_modifier",
-        "quotient", "display_score",
+        "active_spin_pct", "usage_rate", "arsenal_size", "effective_usage",
+        "active_spin_quotient", "delivery_modifier", "quotient", "display_score",
     ]]
 
 
@@ -1250,14 +1303,15 @@ def compute_daily_display_scores(daily_agg: pd.DataFrame, pitch_metrics: pd.Data
       cross-section -- a day might have only a handful of pitchers throwing
       a given pitch type at all, nowhere near enough to self-calibrate a
       meaningful distribution.
-    - usage_rate and delivery_modifier are borrowed from the SEASON
-      pitch_metrics row for that (player_id, pitch_type) rather than
+    - effective_usage (Option C's arsenal-corrected usage_rate -- see
+      MEDIAN_ARSENAL_SIZE above) and delivery_modifier are borrowed from the
+      SEASON pitch_metrics row for that (player_id, pitch_type) rather than
       computed fresh -- a single day's game plan or pitch count says little
       about a pitcher's real mix or release, and there's no daily delivery
-      reading to compute from in the first place. A pitcher who threw this
-      pitch type yesterday but has no qualifying SEASON row for it (hasn't
-      cleared MIN_PITCHES/MIN_SEASON_PITCHES_TO_QUALIFY yet) is dropped --
-      there's no season yardstick to place them on.
+      reading (or daily arsenal_size) to compute from in the first place. A
+      pitcher who threw this pitch type yesterday but has no qualifying
+      SEASON row for it (hasn't cleared MIN_PITCHES/MIN_SEASON_PITCHES_TO_QUALIFY
+      yet) is dropped -- there's no season yardstick to place them on.
     - the changeup's fastball-gap terms (velocity and IVB) use the SEASON
       fastball_baseline and are z-scored against the SEASON gap
       distribution, for the same reason -- and for the same reason CH is
@@ -1360,15 +1414,15 @@ def compute_daily_display_scores(daily_agg: pd.DataFrame, pitch_metrics: pd.Data
         )
 
         day_group = day_group.merge(
-            season_group[["player_id", "usage_rate", "delivery_modifier"]],
+            season_group[["player_id", "effective_usage", "delivery_modifier"]],
             on="player_id", how="left",
         )
-        day_group = day_group.dropna(subset=["usage_rate", "delivery_modifier"])
+        day_group = day_group.dropna(subset=["effective_usage", "delivery_modifier"])
         if day_group.empty:
             continue
 
         day_group["daily_quotient"] = (
-            day_group["ceiling"] * (day_group["usage_rate"] ** USAGE_RATE_EXPONENT) * day_group["delivery_modifier"]
+            day_group["ceiling"] * (day_group["effective_usage"] ** USAGE_RATE_EXPONENT) * day_group["delivery_modifier"]
         )
 
         season_quotient_mean = season_group["quotient"].mean()
