@@ -264,6 +264,56 @@ DELIVERY_WEIGHT_IN_USCORE = 0.3
 # still hold.
 CH_SPIN_WEIGHT = 0.5
 
+# FS-specific override of spin's shape/weight (2026-10 model review, FS
+# spin pass, done right after FS's velocity/IVB/horizontal passes above).
+# Same starting problem as CH's: raw spin had no per-pitch-type treatment
+# at all, always-signed, flat 0.10 weight, rewarding higher spin
+# unconditionally. Checked whether FS deserved the same full symmetric
+# abs treatment CH got, and the answer is "partially, not fully":
+#   - The low-spin side has real grounding: Smith and Gilbert (two of the
+#     10 lowest-spin FS in the population) are also two of the 10
+#     steepest-dropping FS on IVB -- consistent with the real physics
+#     (less backspin -> more drop) and with low spin being part of the
+#     same genuine diving-splitter archetype IVB's fix above already
+#     recognizes.
+#   - BUT the credit-term correlation test (the rigorous one, restricted
+#     to the diving sub-population IVB's fix actually touches, not just
+#     a population-wide raw-metric correlation) found this is NOT mostly
+#     double-counting: r=0.214 (p=0.123, not significant) on the diving
+#     subpop, r=0.100 (p=0.315) population-wide -- both far short of
+#     velocity's original r=-0.70 double-counting problem. Only 3/10 of
+#     the lowest-spin FS are also among the 10 most-diving, so low spin
+#     is mostly adding real, independent information, not re-crediting
+#     IVB's signal twice.
+#   - The high-spin side has NO equivalent grounding: unlike CH (Devin
+#     Williams's high-spin changeup is an independently famous, validated
+#     weapon), none of FS's highest-spin names (Dobbins, Ryan, Boyle,
+#     Civale) have a confirmed reputation for an elite splitter
+#     specifically -- they may just be numerically extreme, the same
+#     distinction that mattered when FS velocity's abs treatment was
+#     validated against real examples on both ends and this wasn't.
+# Given that asymmetry in confidence, this takes FS IVB's "narrower path"
+# approach rather than CH spin's full symmetric one: full weight on the
+# low-spin (diving-adjacent) side, a discount on the high side. Swept
+# base weight 0.10-1.0 (discount fixed, then re-confirmed at discount
+# 0.5) against the real 103-pitcher FS population: effect grows smoothly
+# and predictably (mean|delta| 1.0 at 0.10 up to 3.2 at 1.0, named
+# examples moving the expected direction throughout -- Smith 107->114,
+# Gilbert 117->123 as weight climbs, high-spin discounted names barely
+# moving either way). 0.5 chosen for both the base weight and the
+# high-side discount -- real, visible credit for the grounded low-spin
+# archetype without extending the same confidence to the ungrounded
+# high-spin side.
+#
+# Flagged for revisit, not treated as final, same as CH_SPIN_WEIGHT
+# above: derived from the current single-season dataset, and the
+# high-spin side in particular deserves another look once either (a)
+# the planned multi-season uplift gives more to work with, or (b) real
+# evidence surfaces that a specific high-spin splitter is a genuine,
+# recognized weapon rather than just a numeric outlier.
+FS_SPIN_WEIGHT = 0.5
+FS_SPIN_HIGH_DISCOUNT = 0.5
+
 # Per-pitch-type override for how much vertical break (IVB) counts toward
 # the Ceiling formula, in place of the global IVB_WEIGHT -- the IVB
 # counterpart to HORIZ_WEIGHT_OVERRIDE below. Flat/symmetric (applies the
@@ -1189,6 +1239,24 @@ CH_IVB_RAW_ABOVE_AVG_DISCOUNT = 0.5
 # Left at 0.25 -- confirmed by a real sweep, not an inherited guess, the
 # same status SV's weight reached, just arriving at "no change" instead
 # of "re-derive to the same number."
+#
+# FS 0.25, i.e. no override -- CONFIRMED (2026-10 model review, FS
+# horizontal pass, done after FS's velocity and IVB passes above): same
+# shape conclusion as CH -- 100% of the 103 FS pitchers in the
+# population break arm-side, 0% glove-side, so there's no real opposite-
+# direction archetype for a shape change to rescue. Weight swept 0.25
+# through 1.25: effect near-negligible close to the default (0 movers
+# >=10 through 0.49, named spot check essentially flat), only growing
+# past 0.65. Checked the biggest losers at the aggressive end (Cruz,
+# Gilbert, Anderson, Leiter, Waldrep, -12 to -25 at w=1.25) against the
+# "punished for a defining trait" failure mode -- all five are also
+# below-average on velocity (80-84mph vs. 86.8mph population mean) and
+# unremarkable on IVB, i.e. generically modest splitters across every
+# dimension, not good pitches losing credit for lacking one specific
+# trait. No empirical reason to move off the default -- FS's own
+# calling cards (velocity separation, the IVB extremes resolved above)
+# are the more clearly defining traits. Left at 0.25, confirmed rather
+# than untouched.
 HORIZ_WEIGHT_OVERRIDE = {
     "SL": 0.49, "ST": 1.05, "SV": 0.5,
 }
@@ -1936,16 +2004,33 @@ def compute_pitch_quotients(pitch_metrics: pd.DataFrame, active_spin_fallback: p
             horiz_z = horiz_z.abs()
         elif HORIZ_SHAPE.get(pt) == "signed_neg":
             horiz_z = -horiz_z
-        spin_z = zscore(group["spin_rpm"])
+        spin_z_raw_signed = zscore(group["spin_rpm"])
+        spin_z = spin_z_raw_signed
         if pt == "CH":
             # See CH_SPIN_WEIGHT's definition above for the full
             # rationale -- both spin extremes contain real, independently
             # elite CH archetypes, so distance from average in EITHER
             # direction is rewarded, not just high spin.
             spin_z = spin_z.abs()
+        elif pt == "FS":
+            # See FS_SPIN_WEIGHT's definition above -- low spin has real
+            # grounding (overlaps with the diving-splitter archetype),
+            # high spin doesn't yet, so this is folded to a distance but
+            # weighted asymmetrically below rather than credited equally.
+            spin_z = spin_z.abs()
         as_weight = ACTIVE_SPIN_WEIGHT.get(pt, 0.0)
         horiz_weight = HORIZ_WEIGHT_OVERRIDE.get(pt, HORIZ_WEIGHT)
-        spin_weight = CH_SPIN_WEIGHT if pt == "CH" else SPIN_WEIGHT
+        if pt == "CH":
+            spin_weight = CH_SPIN_WEIGHT
+        elif pt == "FS":
+            # Full FS_SPIN_WEIGHT on the low-spin side (spin_z_raw_signed
+            # < 0), discounted to FS_SPIN_WEIGHT * FS_SPIN_HIGH_DISCOUNT
+            # on the high-spin side -- the same asymmetric-weight pattern
+            # as IVB_WEIGHT_ABOVE_AVG_OVERRIDE, applied here to spin.
+            spin_weight = pd.Series(FS_SPIN_WEIGHT, index=group.index)
+            spin_weight[spin_z_raw_signed >= 0] = FS_SPIN_WEIGHT * FS_SPIN_HIGH_DISCOUNT
+        else:
+            spin_weight = SPIN_WEIGHT
 
         # Most pitch types use a single flat IVB_WEIGHT for every row. A
         # pitch type listed in IVB_WEIGHT_BELOW_AVG_OVERRIDE (FF) or
@@ -2157,13 +2242,24 @@ def compute_daily_display_scores(daily_agg: pd.DataFrame, pitch_metrics: pd.Data
         elif HORIZ_SHAPE.get(pt) == "signed_neg":
             horiz_z = -horiz_z
 
-        spin_z = _season_pop_zscore(day_group["spin_rpm"], season_group["spin_rpm"])
+        spin_z_raw_signed = _season_pop_zscore(day_group["spin_rpm"], season_group["spin_rpm"])
+        spin_z = spin_z_raw_signed
         if pt == "CH":
             # See CH_SPIN_WEIGHT's definition in compute_pitch_quotients
             # for the full rationale.
             spin_z = spin_z.abs()
+        elif pt == "FS":
+            # See FS_SPIN_WEIGHT's definition in compute_pitch_quotients
+            # for the full rationale.
+            spin_z = spin_z.abs()
         horiz_weight = HORIZ_WEIGHT_OVERRIDE.get(pt, HORIZ_WEIGHT)
-        spin_weight = CH_SPIN_WEIGHT if pt == "CH" else SPIN_WEIGHT
+        if pt == "CH":
+            spin_weight = CH_SPIN_WEIGHT
+        elif pt == "FS":
+            spin_weight = pd.Series(FS_SPIN_WEIGHT, index=day_group.index)
+            spin_weight[spin_z_raw_signed >= 0] = FS_SPIN_WEIGHT * FS_SPIN_HIGH_DISCOUNT
+        else:
+            spin_weight = SPIN_WEIGHT
 
         # Same per-row conditional IVB weight as compute_pitch_quotients --
         # see IVB_WEIGHT_BELOW_AVG_OVERRIDE's and
