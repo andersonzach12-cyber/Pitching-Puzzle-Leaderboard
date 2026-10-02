@@ -1081,6 +1081,28 @@ CH_IVB_RAW_ABOVE_AVG_DISCOUNT = 0.5
 #      bounded cost to pitchers whose value comes from elsewhere (Meyer
 #      135->123, Poulin 99->89) rather than chasing the full PCA ratio's
 #      much larger swing.
+#
+# CH 0.25, i.e. no override -- CONFIRMED, not untouched (2026-10 model
+# review, CH horizontal pass, done after the CH velocity and IVB passes
+# above): unlike SL/ST, this dimension does have real leverage on the
+# real 2026-season CH population at higher candidate weights (swept 0.25
+# through 1.56: 0 pitchers moved >=10 points at 0.49, rising to 64/400 at
+# 1.56) -- so this isn't SV's "genuinely flat, no real decision to make"
+# case. But unlike SL, there's no clean argument that horizontal fade is
+# CH's single defining trait deserving a boost above the fastball-tuned
+# default the way sweep is a slider's -- velocity separation and overall
+# depth are the more commonly cited differentiators for a changeup (see
+# the Morejon spot-check, 2026-10: his model score is held down by
+# horizontal and spin, not velocity or IVB, yet his changeup is
+# independently regarded as a true gold-standard pitch on its own merits,
+# which argues against treating horizontal as the dominant axis here).
+# Fine-grained sweep close to the current default (0.25-0.40) found the
+# effect near-negligible in that range (max |delta| 1-6 points, 0
+# meaningful movers through 0.35), so there was no empirical reason to
+# prefer a nearby value like 0.30 over the existing default either.
+# Left at 0.25 -- confirmed by a real sweep, not an inherited guess, the
+# same status SV's weight reached, just arriving at "no change" instead
+# of "re-derive to the same number."
 HORIZ_WEIGHT_OVERRIDE = {
     "SL": 0.49, "ST": 1.05, "SV": 0.5,
 }
