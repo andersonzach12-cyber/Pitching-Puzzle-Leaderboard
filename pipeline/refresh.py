@@ -391,9 +391,30 @@ IVB_WEIGHT_BELOW_AVG_OVERRIDE = {
 # Montgomery, Jansen, Hunter Greene) -- all stayed clearly above-average
 # even at far more aggressive discount levels than 0.60, confirming this
 # compresses the high-carry group without punishing it into irrelevance.
+#
+# FS 0.35 (2026-10 model review, FS IVB pass, done right after flipping
+# IVB_SHAPE["FS"] from signed_neg -> abs -- see that flip's own writeup
+# above for the full rationale): unlike SI/FC, which started from an
+# already-abs shape and only needed a weight tweak, this pairs a shape
+# flip with the discount in the same change, because the "both sides
+# legitimate" case is real but intentionally narrower for FS IVB than it
+# is for FS velocity (no equivalently strong named validation for the
+# high/flat side yet -- see VELO_SHAPE's FS entry for comparison). Swept
+# 0.95 (full symmetric credit, no discount) down to 0.0 against the real
+# 103-pitcher FS population: 0.95 alone is a big swing off the old
+# penalizing baseline (mean|delta| 5.84, max 40, 15 pitchers moving
+# >=10), shrinking smoothly as the discount increases, down to a much
+# gentler mean|delta| 2.82/max 19 even at a full 0.0 discount -- because
+# merely removing signed_neg's active penalty is itself a real change for
+# a wide swath of the population before any positive credit is even
+# added back. 0.35 was chosen as the deliberate "narrow path" point: real
+# movement off the old penalty for flat extremes (Kremer 86->114, Curry
+# 87->104, Helsley 91->98) without approaching parity with genuine divers
+# (Cano 135->138) or FS velocity's fully symmetric treatment.
 IVB_WEIGHT_ABOVE_AVG_OVERRIDE = {
     "SI": 0.60,
     "FC": 0.50,
+    "FS": 0.35,
 }
 
 # The velocity-side counterpart to IVB_WEIGHT_BELOW_AVG_OVERRIDE/
@@ -773,10 +794,30 @@ MIN_ARSENAL_USAGE_RATE = 0.035
 #     ALSO discounted relative to its above-average side rather than
 #     credited equally -- see IVB_WEIGHT_BELOW_AVG_OVERRIDE above for why
 #     and how.
+#   - Splitters switched signed_neg -> abs (2026-10 model review, FS IVB
+#     pass, done after FS's velocity shape was separately confirmed
+#     already correct): the real 2026-season FS population (103 rows)
+#     spans a genuinely wide range on IVB (-5.2in to +10.1in), unlike FS's
+#     horizontal (checked the same pass and left alone -- 100% of FS break
+#     arm-side, no real opposite-direction population the way IVB has).
+#     The low/diving end is the classic, universally-recognized splitter
+#     archetype (Cano, Smith, De Leon at the extreme). The high/flat end
+#     is a narrower path -- there's a real case for an unusually flat
+#     splitter still playing (less depth can mean it tunnels longer off
+#     the fastball before diving), but it isn't as clearly an
+#     independently elite weapon the way FS velocity's two extremes both
+#     are (that one has named, validated examples on both sides -- see
+#     VELO_SHAPE below). The old signed_neg treatment was actively
+#     PENALIZING flat splitters (Kremer, Curry, Helsley all scored
+#     86-91, well below average, under the old shape) rather than just
+#     withholding credit, which overstated the case against them. Abs
+#     plus a same-pattern above-average discount (see
+#     IVB_WEIGHT_ABOVE_AVG_OVERRIDE's FS entry below) replaces that
+#     penalty with real but narrower credit instead.
 # Defaults to "signed" for any pitch type not listed here.
 IVB_SHAPE = {
     "SL": "abs", "ST": "abs", "SV": "abs", "FC": "abs", "SI": "abs",
-    "CU": "abs", "KC": "abs", "FS": "signed_neg", "FF": "abs",
+    "CU": "abs", "KC": "abs", "FS": "abs", "FF": "abs",
 }
 
 # Whether velocity should reward being faster ("signed", the default),
