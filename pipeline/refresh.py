@@ -251,8 +251,39 @@ DELIVERY_WEIGHT_IN_USCORE = 0.3
 # dimension; here, no single pitcher crosses -10, and the pitchers who lose
 # the most (681544 -6, 641793 -5) are still left with real, substantial IVB
 # credit at 0.60, not a near-zeroing-out).
+#
+# ST 1.46 (2026-10 model review, ST IVB pass, done after the ST velocity
+# pass above and after both SL<->ST reclassifications): tested against the
+# final, post-reclassification ST population (301 rows, IVB mean 1.18in/std
+# 3.5in). This is a magnitude-only change -- IVB_SHAPE["ST"] is already
+# "abs" (symmetric both directions), so bumping the weight from the
+# fastball-tuned 0.95 default to 1.46 just gives that existing symmetric
+# term more say, without changing its shape. Full sweep (0.95/1.10/1.22/
+# 1.46) showed the gentlest population effect of any weight change in this
+# review: even at full candidate strength, mean |delta| 1.52, max |delta| 9,
+# 0/301 pitchers moving >=10 points -- low risk by construction. Named
+# extremes move sensibly: Tyler Rogers (643511, 73.5mph submarine, +13.6in,
+# the single most extreme IVB in the ST population) 115->120; Elieser
+# Hernández (622694, +10.1in) 101->108; Scott Barlow (605130, +7.8in)
+# 108->115.
+#
+# Explicitly tested and rejected: an asymmetric above/below-average IVB
+# discount (mirroring IVB_WEIGHT_BELOW_AVG_OVERRIDE/
+# IVB_WEIGHT_ABOVE_AVG_OVERRIDE's pattern elsewhere in this file). The
+# above-average (rise) and below-average (drop) IVB groups are
+# indistinguishable on every other trait that would justify treating them
+# differently: mean |horizontal_in| 13.43in (above-avg group) vs 13.84in
+# (below-avg group), corr(ivb_in, horizontal_in) = 0.07 (~none), mean velo
+# 82.25 vs 82.60mph (~none). Critically, Max Meyer (676974, the 89mph power
+# sweeper explicitly protected by the VELO_SHAPE/discount decision above)
+# sits on the negative-IVB/drop side (-6.3in) alongside Dylan Cease and Drew
+# Rom -- discounting below-average IVB to address any one of these would
+# have clawed back credit from the same pitcher that decision was built to
+# protect, directly undermining it. No asymmetric split applied; flat 1.46
+# on both sides.
 IVB_WEIGHT_OVERRIDE = {
     "SL": 0.60,
+    "ST": 1.46,
 }
 
 # Per-pitch-type override: when a pitch type's IVB shape is "abs" (reward
@@ -456,13 +487,26 @@ VELO_WEIGHT_BELOW_AVG_OVERRIDE = {
 # types (ST/SV next, given FF/SI/FC/CU/KC/SL are now done):
 #   IVB_WEIGHT_OVERRIDE:   SL RESOLVED (2026-10, see IVB_WEIGHT_OVERRIDE's
 #                          own definition above -- shipped at 0.60, not the
-#                          raw PCA candidate of 0.54), ST 1.46 (CU/KC's 1.22
+#                          raw PCA candidate of 0.54), ST RESOLVED (2026-10,
+#                          see IVB_WEIGHT_OVERRIDE's own definition above --
+#                          shipped at 1.46, the raw PCA candidate; asymmetric
+#                          above/below discount explicitly tested and
+#                          rejected, see same definition) (CU/KC's 1.22
 #                          candidate TESTED and REJECTED below, not applied)
 #   HORIZ_WEIGHT_OVERRIDE: SL RESOLVED (2026-10, see HORIZ_WEIGHT_OVERRIDE's
 #                          own definition above -- the previous 0.65 had NO
 #                          fact-based derivation at all, discovered during
 #                          this review; re-swept from scratch and shipped at
-#                          0.49, matching the PCA candidate), ST 1.56, SV 0.5
+#                          0.49, matching the PCA candidate), ST RESOLVED
+#                          (2026-10, see HORIZ_WEIGHT_OVERRIDE's own
+#                          definition above -- ST's previous 0.65 had the
+#                          SAME unvalidated provenance as SL's; re-swept
+#                          from scratch, shape confirmed to stay signed_neg
+#                          (not flipped to abs -- no "wrong-way breaker"
+#                          population exists for ST, unlike SL), and the
+#                          PCA candidate 1.56 TESTED and REJECTED for
+#                          punishing Max Meyer -23 points; shipped at 1.05
+#                          instead, a deliberate middle ground), SV 0.5
 #                          (unchanged) (CU/KC's 0.14 candidate TESTED and
 #                          REJECTED below)
 #   ACTIVE_SPIN_WEIGHT:    SL 0.06, ST 0.23, SV 0.10 (unchanged) -- SL's
@@ -827,8 +871,46 @@ CH_IVB_RAW_WEIGHT = 0.3
 # far gentler than 0.65's 3-5). 0.65 was the first weight on the sweep where
 # that stability broke down for marginal extra credit to the same handful of
 # outliers -- diminishing returns for real cost.
+#
+# ST 1.05 (2026-10 model review, ST horizontal pass, done after the ST
+# velocity and IVB passes above): the previous value here, 0.65, turned out
+# to have the exact same unvalidated provenance as SL's old 0.65 -- it was
+# introduced in the same commit, with no sweep or spot-check behind it
+# either. Re-derived from scratch: swept 0.25 (no override) through 1.56
+# (the PCA candidate) against the final, post-reclassification ST
+# population (301 rows). Two things came out of this:
+#   1. Shape: HORIZ_SHAPE["ST"] stays "signed_neg" (NOT flipped to "abs").
+#      Tested abs anyway for rigor -- at the (then-current) 0.65 weight it
+#      reshuffled the leaderboard significantly (Spearman 0.83, mean|delta|
+#      4.15, max|delta| 29, 19/301 movers >=10), but the WRONG direction:
+#      unlike SL (which has real "wrong-way breaker" outliers, e.g.
+#      Sasaki-style, that abs correctly credits), zero of the 301 ST
+#      pitches break arm-side at all -- every single one breaks glove-side,
+#      consistent with that being the pitch's defining trait. abs would
+#      instead reward mediocre sweep (e.g. Poulin -7.7in, well below the
+#      -13.6in population average) just for being numerically far from the
+#      mean on the "wrong" side, treating weak sweep as if it were an
+#      equally valid archetype to extreme sweep -- no real-world story
+#      supports that, so abs was rejected and signed_neg kept.
+#   2. Weight: the sweep showed 0.49-0.85 is a genuinely stable zone (0
+#      pitchers moving >=10 points anywhere in that range), meaning the old
+#      0.65, despite being unvalidated, happened to land somewhere
+#      defensible. 1.56 (the raw PCA candidate) was tested and explicitly
+#      REJECTED: it hits Max Meyer (676974, the 89mph power sweeper
+#      protected by the VELO_SHAPE/VELO_WEIGHT_BELOW_AVG_OVERRIDE and
+#      IVB_WEIGHT_OVERRIDE decisions above, whose sweep is only -8.9in,
+#      well below average) for -23 points (135->112), since he earns his
+#      value from velocity/IVB rather than extreme horizontal -- the same
+#      "punished for not leaning on the bumped dimension" failure mode that
+#      sank CU/KC's rejected movement-weight bump elsewhere in this file.
+#      1.05 was chosen as a deliberate middle ground past the fully-stable
+#      zone: it gives real, visible extra credit to genuine sweep outliers
+#      (Gibson, Cade at -21.5in: 122->131) while accepting a modest,
+#      bounded cost to pitchers whose value comes from elsewhere (Meyer
+#      135->123, Poulin 99->89) rather than chasing the full PCA ratio's
+#      much larger swing.
 HORIZ_WEIGHT_OVERRIDE = {
-    "SL": 0.49, "ST": 0.65, "SV": 0.5,
+    "SL": 0.49, "ST": 1.05, "SV": 0.5,
 }
 
 # Whether horizontal break should reward a specific direction ("signed" --
