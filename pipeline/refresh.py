@@ -1675,8 +1675,20 @@ def run():
         pitchers_rows = sanitize_records(
             pitchers.where(pd.notnull(pitchers), None).to_dict(orient="records"), "pitchers"
         )
+        # arsenal_size/effective_usage (Option C, 2026-10 usage-rate review)
+        # exist on this DataFrame for transparency/debugging and because
+        # compute_daily_display_scores still needs effective_usage from it --
+        # but the live Supabase `pitch_metrics` table's schema was never
+        # migrated to include either column, so uploading them as-is fails
+        # the upsert (PGRST204, "column not found in schema cache"). Drop
+        # them from the upload payload only; the in-memory `pitch_metrics`
+        # passed to compute_daily_display_scores above is untouched.
+        pitch_metrics_for_upload = pitch_metrics.drop(
+            columns=["arsenal_size", "effective_usage"], errors="ignore"
+        )
         pitch_rows = sanitize_records(
-            pitch_metrics.where(pd.notnull(pitch_metrics), None).to_dict(orient="records"), "pitch_metrics"
+            pitch_metrics_for_upload.where(pd.notnull(pitch_metrics_for_upload), None).to_dict(orient="records"),
+            "pitch_metrics",
         )
 
         upsert_in_batches(supabase.table("pitchers"), pitchers_rows)
