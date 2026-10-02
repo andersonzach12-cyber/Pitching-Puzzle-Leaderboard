@@ -252,6 +252,19 @@ DELIVERY_WEIGHT_IN_USCORE = 0.3
 # the most (681544 -6, 641793 -5) are still left with real, substantial IVB
 # credit at 0.60, not a near-zeroing-out).
 #
+# SV 0.5 (2026-10 model review, SV horizontal pass, done after the SV
+# velocity pass): this value had the exact same unvalidated provenance as
+# SL/ST's old 0.65 -- introduced in the same commit, with no sweep or
+# spot-check behind it. Unlike SL/ST, re-deriving it from scratch did NOT
+# produce a different answer: swept 0.25 through 1.56 against the real
+# 15-pitcher SV population and found the dimension genuinely low-leverage
+# at this sample size -- even tripling the weight to 1.0 moves the single
+# biggest mover (Sean Newcomb, -17.8in) by only 6 points, and it takes the
+# full 1.56 PCA candidate before even one pitcher crosses a 10-point move
+# (Newcomb +10). Same conclusion as SL's spin review: checked carefully,
+# found flat, left as-is -- 0.5 is now a confirmed value, not an inherited
+# guess.
+#
 # ST 1.46 (2026-10 model review, ST IVB pass, done after the ST velocity
 # pass above and after both SL<->ST reclassifications): tested against the
 # final, post-reclassification ST population (301 rows, IVB mean 1.18in/std
@@ -506,9 +519,16 @@ VELO_WEIGHT_BELOW_AVG_OVERRIDE = {
 #                          population exists for ST, unlike SL), and the
 #                          PCA candidate 1.56 TESTED and REJECTED for
 #                          punishing Max Meyer -23 points; shipped at 1.05
-#                          instead, a deliberate middle ground), SV 0.5
-#                          (unchanged) (CU/KC's 0.14 candidate TESTED and
-#                          REJECTED below)
+#                          instead, a deliberate middle ground), SV RESOLVED
+#                          (2026-10, see HORIZ_WEIGHT_OVERRIDE's own
+#                          definition above -- same unvalidated provenance
+#                          as SL/ST's old 0.65, but re-deriving it did NOT
+#                          change the answer: swept 0.25-1.56 against the
+#                          15-pitcher SV population and found the dimension
+#                          genuinely flat at this sample size, same
+#                          conclusion as SL's spin review; left at 0.5,
+#                          now confirmed rather than inherited) (CU/KC's
+#                          0.14 candidate TESTED and REJECTED below)
 #   ACTIVE_SPIN_WEIGHT:    SL 0.06, ST 0.23, SV 0.10 (unchanged) -- SL's
 #                          spin (both active-spin and raw spin_rpm) reviewed
 #                          2026-10 and found genuinely flat: even a full
@@ -794,8 +814,28 @@ IVB_SHAPE = {
 # deceptive-lefty group correctly recognized) was judged to outweigh it --
 # but see the discount choice below for how that skepticism was still
 # incorporated.
+#
+# Slurves switched signed -> abs (2026-10 model review, SV pass, done after
+# the full ST pass above): SV is the thinnest population reviewed this
+# round (15 qualifying pitchers, velo range 77.2-87.3mph, mean 82.0/std
+# 2.8) -- too small to trust a precisely-calibrated below-average discount
+# the way SL (0.35) and ST (0.25) got, so this was deliberately kept to a
+# directional/shape question only, no weight override. The shape case
+# itself is the same analogical one as every other breaking ball in this
+# dict: SV is a slider/curveball hybrid, and both a hard/firm slurve and a
+# slow/loopy one are plausible distinct weapons, matching CU/KC/FS/FC/SL/
+# ST's "both extremes can be elite" logic -- SV was simply the one pitch
+# type this hadn't been applied to yet. Tested against the real population:
+# Spearman 0.70 vs the old signed baseline, mean |delta| 5.80, max |delta|
+# 20, 2/15 movers >=10 -- a real reshuffle, but expected and accepted at
+# this sample size: with only 15 pitchers, one or two individuals (Mitch
+# Bratt, 79.6mph, +20; Michael Soroka, 80.6mph, +11) necessarily carry a
+# large share of any population-wide change. No below-average discount
+# override was added on top of this -- full symmetric credit, consistent
+# with not over-fitting a magnitude decision to this few data points.
 VELO_SHAPE = {
     "CU": "abs", "KC": "abs", "FS": "abs", "FC": "abs", "SL": "abs", "ST": "abs",
+    "SV": "abs",
 }
 
 # Changeup velocity is scored as a blend of two things, rather than a single
