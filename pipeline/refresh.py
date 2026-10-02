@@ -815,6 +815,35 @@ IVB_SHAPE = {
 # but see the discount choice below for how that skepticism was still
 # incorporated.
 #
+# Follow-up (2026-10, revisited the day after shipping): tested whether a
+# NEGATIVE below-average discount (e.g. -0.20 -- still abs-shaped, but
+# clawing back part of the credit rather than just zeroing it out) would be
+# a better answer to the double-counting concern above. Two things came out
+# of testing this properly:
+#   1. The original r=0.30 was computed on raw velo vs. raw horizontal_in
+#      across the WHOLE population -- not a measure of actual overlap in
+#      the scoring formula. Directly checking correlation between the
+#      actual CREDIT terms (velo_weight*velo_z vs. horiz_weight*horiz_z)
+#      for the population the discount actually touches (below-average-
+#      velocity rows, n=149) found no meaningful overlap at all: r=0.06
+#      with horizontal credit (p=0.47), r=0.12 with IVB credit (p=0.15).
+#      Full-population velo-credit-vs-horiz-credit correlation was even
+#      slightly NEGATIVE (-0.26).
+#   2. Named check confirms this directly: Manaea (640455) and Palmquist
+#      (687223), the two pitchers a negative discount would hit hardest,
+#      rank in the bottom ~10th percentile of the ST population on IVB
+#      credit and only ~35th percentile on horizontal credit -- their
+#      velocity credit is not icing on an already-strong movement profile,
+#      it's close to the ONLY thing distinguishing them. The double-
+#      counting story specifically does not hold for the pitchers it would
+#      most affect.
+# Conclusion: the one substantive reason to move off 0.25 failed a direct
+# test, so 0.25 stands. (Also worth being honest about: 0.25 itself sits on
+# a smooth, inflection-free sweep curve just like -0.20 would -- it is not
+# "data-derived" in the sense of a real breakpoint, it was a deliberate,
+# conservative judgment call. That's an accurate description of this
+# number, not a flaw unique to it.)
+#
 # Slurves switched signed -> abs (2026-10 model review, SV pass, done after
 # the full ST pass above): SV is the thinnest population reviewed this
 # round (15 qualifying pitchers, velo range 77.2-87.3mph, mean 82.0/std
@@ -843,17 +872,73 @@ VELO_SHAPE = {
 #   1. Velocity SEPARATION from the pitcher's own fastball (the harder of
 #      their four-seam or sinker, whichever they throw) -- the main driver
 #      of a changeup's deception, and the majority of the weight.
-#   2. Raw changeup velocity itself, signed so faster is still rewarded --
-#      a smaller, secondary term, since there's still real value in a firm
-#      94 mph changeup over a loopy 78 mph one even at an identical gap off
-#      the fastball (reaction time is governed by the actual pitch speed
-#      too, not just the gap).
+#   2. The RESIDUAL of raw changeup velocity after removing the part
+#      mechanically explained by that same gap -- i.e. "is this changeup
+#      faster or slower than you'd expect GIVEN how much separation this
+#      pitcher gets," not raw velocity in a flat, context-free sense. A
+#      smaller, secondary term: there's still real value in a changeup that
+#      beats the population's own gap/velocity tradeoff (genuinely hard AND
+#      genuinely well-separated at once), independent of how large the gap
+#      itself is.
+#
+# 2026-10 model review, CH velocity pass: originally this second term was
+# just raw velocity, signed, blended directly with the gap term. Checking
+# this against the real 2026-season CH population (400 pitchers) found a
+# real design problem: gap (fastball velo minus CH velo) and raw CH velocity
+# are correlated at r=-0.70 (R^2=0.49) -- not surprising in hindsight, since
+# a harder changeup almost mechanically means a smaller gap for a given
+# fastball. The two terms were not complementary signals, they were mostly
+# the same signal pointed in opposite directions: 74% of CH pitchers
+# (294/398 with a valid fastball baseline) had gap_z and raw_z on OPPOSITE
+# sides of average, meaning the supposedly-independent 30% raw term was
+# mostly just partially canceling the dominant 70% gap term rather than
+# adding real information. Concretely, hard/small-gap pitchers (Camilo
+# Doval, 94.5mph CH off a 98.2mph FB, 3.7in-mph gap) were getting a strongly
+# negative gap_z (-1.93) only partially offset by a positive raw_z (+2.60) --
+# net negative overall, despite a legitimately hard changeup -- while
+# big-gap/soft-CH pitchers (Craig Yoho, 15.5mph gap) were getting penalized
+# on raw_z (-2.26) for a softness that was already fully explained by (and
+# arguably the whole point of) their unusually large gap.
+#
+# Fix: residualize. Fit raw_z = intercept + slope*gap_z by OLS across the
+# population with a valid fastball baseline (refit every run, same as every
+# other z-score in this model -- not a fixed historical coefficient), then
+# use the LEFTOVER (raw_z minus that fitted prediction) as the second blend
+# term instead of raw_z itself. The residual is uncorrelated with gap_z by
+# construction, so it adds genuinely new information: a pitcher whose
+# changeup is unusually hard AND well-separated (Jhoan Duran, Andres Munoz,
+# Adrian Morejon, Jacob Misiorowski) now shows a real positive residual
+# (+1.5 to +2.0) that the old raw_z blend couldn't distinguish from "just
+# has a small gap, nothing special." A pitcher who's slow AND doesn't even
+# have the separation to show for it (Alek Manoah) shows a real negative
+# residual, distinct from "slow because huge gap" (which the residual
+# correctly stops penalizing). Pitchers whose only distinguishing trait was
+# "hard changeup, small gap" (Doval, Edward Cabrera) see a modest net
+# decline -- their apparent hardness turns out to be mostly what their small
+# gap already predicts, not an independent plus. Named/population testing
+# against the real 2026-season CH population (swapping in the residual at
+# the then-current 70/30 split first): Spearman 0.98 vs. the old raw-blend
+# baseline, mean |delta| 1.05, max |delta| 6, 0/400 pitchers moving >=10 --
+# a real, sensible reshuffle, gentle in magnitude since other dimensions
+# (horizontal, IVB, usage) dilute any one sub-component's swing.
+#
+# Weight re-derivation: swept the gap/residual split from 1.0/0.0 (gap-only)
+# down through 0.5/0.5 against the old raw-blend baseline; no inflection
+# point, smooth curve like every other sweep in this file (0.5/0.5: mean
+# |delta| 1.07/max 6; 0.7/0.3: 1.05/6; 0.8/0.2: 1.57/8; 0.9/0.1: 2.06/11,
+# 2 movers >=10; 1.0/0.0: 2.44/13, 6 movers >=10). Shipped at 0.6/0.4
+# (closest net stability to the old baseline, 0.73/5, though not uniquely
+# "correct" any more than any other point on that curve) -- gives the
+# genuinely-independent residual signal slightly more say than a straight
+# carryover of the old 70/30 ratio would, since unlike the old raw_z, it's
+# no longer mostly redundant with the gap term.
+#
 # The two weights sum to 1.0, the same total weight every other pitch type's
 # single velocity term carries, so CH's velocity dimension stays on the same
 # overall scale as the rest of the model -- just split between two signals
 # instead of one.
-CH_VELO_GAP_WEIGHT = 0.7
-CH_RAW_VELO_WEIGHT = 0.3
+CH_VELO_GAP_WEIGHT = 0.6
+CH_RAW_VELO_WEIGHT = 0.4
 
 # Changeup IVB is scored as the same kind of two-term blend as changeup
 # velocity above, added 2026-10 once it became clear a league-relative shape
@@ -1640,16 +1725,26 @@ def compute_pitch_quotients(pitch_metrics: pd.DataFrame, active_spin_fallback: p
                                              # BEFORE any shape transform collapses that information.
         velo_z = velo_z_raw
         if pt == "CH":
-            # Blend velocity-separation-from-own-fastball with raw velocity
-            # (see CH_VELO_GAP_WEIGHT/CH_RAW_VELO_WEIGHT above) instead of a
-            # single shape flag. A pitcher with no qualifying FF/SI this
-            # season has no baseline to compare against -- treat the gap
-            # term as neutral (0) for just those rows rather than penalizing
-            # or rewarding on an undefined basis.
+            # Blend velocity-separation-from-own-fastball with the RESIDUAL
+            # of raw velocity after removing the part explained by that same
+            # gap (see CH_VELO_GAP_WEIGHT/CH_RAW_VELO_WEIGHT's definition
+            # above for the full rationale and the r=-0.70 problem this
+            # fixes) instead of a single shape flag. A pitcher with no
+            # qualifying FF/SI this season has no baseline to compare
+            # against -- treat both the gap and residual terms as neutral
+            # (0) for just those rows rather than penalizing or rewarding on
+            # an undefined basis.
             baseline_velo = group["player_id"].map(fastball_baseline["velo"])
             velo_gap = baseline_velo - group["velo"]
-            gap_z = zscore(velo_gap).fillna(0.0)
-            velo_z = CH_VELO_GAP_WEIGHT * gap_z + CH_RAW_VELO_WEIGHT * velo_z
+            gap_z_raw = zscore(velo_gap)
+            has_baseline = gap_z_raw.notna()
+            gap_z = gap_z_raw.fillna(0.0)
+            if has_baseline.sum() >= 2 and gap_z[has_baseline].std() > 0:
+                slope, intercept = np.polyfit(gap_z[has_baseline], velo_z[has_baseline], 1)
+                residual = (velo_z - (intercept + slope * gap_z)).where(has_baseline, 0.0)
+            else:
+                residual = pd.Series(0.0, index=group.index)
+            velo_z = CH_VELO_GAP_WEIGHT * gap_z + CH_RAW_VELO_WEIGHT * residual
         elif VELO_SHAPE.get(pt) == "abs":
             velo_z = velo_z.abs()
         elif VELO_SHAPE.get(pt) == "signed_neg":
@@ -1831,12 +1926,32 @@ def compute_daily_display_scores(daily_agg: pd.DataFrame, pitch_metrics: pd.Data
                                               # any abs()/sign-flip collapses that information.
         velo_z = velo_z_raw
         if pt == "CH":
+            # Residualized gap/velocity blend -- see CH_VELO_GAP_WEIGHT's
+            # definition in compute_pitch_quotients for the full rationale.
+            # The gap->raw-velocity relationship is fit against the SEASON
+            # population (never the day's own tiny cross-section), for the
+            # same stability reason _season_pop_zscore itself exists -- a
+            # day's handful of CH pitchers is nowhere near enough to fit a
+            # trustworthy regression line of its own.
             baseline_velo = day_group["player_id"].map(fastball_baseline["velo"])
             day_velo_gap = baseline_velo - day_group["velo"]
             season_baseline_velo = season_group["player_id"].map(fastball_baseline["velo"])
             season_velo_gap = season_baseline_velo - season_group["velo"]
-            gap_z = _season_pop_zscore(day_velo_gap, season_velo_gap).fillna(0.0)
-            velo_z = CH_VELO_GAP_WEIGHT * gap_z + CH_RAW_VELO_WEIGHT * velo_z
+            gap_z_raw = _season_pop_zscore(day_velo_gap, season_velo_gap)
+            has_baseline = gap_z_raw.notna()
+            gap_z = gap_z_raw.fillna(0.0)
+            season_gap_z_raw = _season_pop_zscore(season_velo_gap, season_velo_gap)
+            season_has_baseline = season_gap_z_raw.notna()
+            season_gap_z = season_gap_z_raw.fillna(0.0)
+            season_raw_z = _season_pop_zscore(season_group["velo"], season_group["velo"])
+            if season_has_baseline.sum() >= 2 and season_gap_z[season_has_baseline].std() > 0:
+                slope, intercept = np.polyfit(
+                    season_gap_z[season_has_baseline], season_raw_z[season_has_baseline], 1
+                )
+            else:
+                slope, intercept = 0.0, 0.0
+            residual = (velo_z - (intercept + slope * gap_z)).where(has_baseline, 0.0)
+            velo_z = CH_VELO_GAP_WEIGHT * gap_z + CH_RAW_VELO_WEIGHT * residual
         elif VELO_SHAPE.get(pt) == "abs":
             velo_z = velo_z.abs()
         elif VELO_SHAPE.get(pt) == "signed_neg":
