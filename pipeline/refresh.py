@@ -228,16 +228,47 @@ IVB_WEIGHT_ABOVE_AVG_OVERRIDE = {
 # and jointly with IVB's discount, balancing "nobody moves >=10 vs. the
 # uncompressed version" against still giving the depth archetype (and
 # Jansen's high-carry counterpart) a real, visible compression.
+#
+# Added for CU/KC (2026-10 model review) for a related but distinct reason
+# than FC's: CU/KC's VELO_SHAPE is already "abs" (a firm, hard curve and a
+# slow, loopy one can both be elite -- see VELO_SHAPE's docstring), which is
+# directionally right, but it was crediting extreme slowness exactly as
+# generously as extreme hardness with no discount either way. Considered
+# alongside a candidate horizontal-weight cut (0.25 -> 0.14, from an earlier
+# PCA pass) and a movement-weight bump (IVB 0.95 -> 1.22), but testing both
+# together showed the horizontal cut actively working against real,
+# legitimate standouts: Matthew Boyd (-11.5in horizontal break, one of the
+# larger sweeps in the league) and Quinn Mathews (-18.6in, a genuine
+# outlier) both lost most of their movement credit under the combined
+# version (-6 and -9 display-score points respectively) specifically
+# because their defining trait is horizontal break, not velocity -- the
+# same "don't punish a pitcher for one standout dimension" problem flagged
+# earlier in this project for sinkers. Velocity alone, isolated from that
+# horizontal cut, was confirmed gentler on exactly those two cases (-5 and
+# -4 instead) while still correcting the thing that mattered: Chris
+# Bassitt's CU (71.3 mph, >2.5 standard deviations below the 80.3 league
+# mean) and Aaron Nola's KC (78.4 vs. an 82.5 league mean) were getting full
+# credit for extreme slowness alone. Movement weights (IVB/horizontal) are
+# left untouched for CU/KC -- the movement-only variant tested separately
+# moved nobody by double digits (max |delta| 7 across 303 rows), confirming
+# there's no real case for changing them right now. 0.60 was chosen to
+# match FC's value for consistency, not independently re-swept, since the
+# full-population effect was already modest at that setting (mean |delta|
+# 1.38, only 1 pitcher of 303 CU/KC rows moving >=10 points) and named
+# archetype checks (Glasnow's firm curve, Valdez's slow/loopy one) moved by
+# 0-1 point, confirming the two intended extremes stay intact.
 VELO_WEIGHT_BELOW_AVG_OVERRIDE = {
     "FC": 0.50,
+    "CU": 0.60,
+    "KC": 0.60,
 }
 
 # ---------------------------------------------------------------------------
 # OPEN ITEM (2026-10 model review): per-pitch-type re-weighting, paused.
 #
 # IVB_WEIGHT/HORIZ_WEIGHT/ACTIVE_SPIN_WEIGHT above are still blanket/
-# hand-picked values for the pitch types below (FF, SI, and FC's weights
-# are now resolved -- see IVB_WEIGHT_BELOW_AVG_OVERRIDE/
+# hand-picked values for the pitch types below (FF, SI, FC, and now CU/KC's
+# weights are resolved -- see IVB_WEIGHT_BELOW_AVG_OVERRIDE/
 # IVB_WEIGHT_ABOVE_AVG_OVERRIDE/VELO_WEIGHT_BELOW_AVG_OVERRIDE above) -- a
 # PCA pass against the real 2026-season `pitch_metrics` table (PC1 loadings
 # normalized to velocity, which has no configurable weight of its own)
@@ -256,10 +287,14 @@ VELO_WEIGHT_BELOW_AVG_OVERRIDE = {
 # writeup.
 #
 # Candidate weights from the PCA pass, for the remaining untouched pitch
-# types (CU/KC next, most likely, given FF/SI/FC are now done):
-#   IVB_WEIGHT_OVERRIDE:   CU/KC 1.22, SL 0.54, ST 1.46
-#   HORIZ_WEIGHT_OVERRIDE: CU/KC 0.14, SL 0.49, ST 1.56, SV 0.5 (unchanged)
-#   ACTIVE_SPIN_WEIGHT:    CU/KC 0.11, SL 0.06, ST 0.23, SV 0.10 (unchanged)
+# types (SL/ST/SV next, given FF/SI/FC/CU/KC are now done):
+#   IVB_WEIGHT_OVERRIDE:   SL 0.54, ST 1.46 (CU/KC's 1.22 candidate TESTED
+#                          and REJECTED below, not applied)
+#   HORIZ_WEIGHT_OVERRIDE: SL 0.49, ST 1.56, SV 0.5 (unchanged) (CU/KC's
+#                          0.14 candidate TESTED and REJECTED below)
+#   ACTIVE_SPIN_WEIGHT:    SL 0.06, ST 0.23, SV 0.10 (unchanged) (CU/KC's
+#                          0.11 candidate was never applied -- a ~no-op vs.
+#                          the existing 0.10, not worth a separate change)
 # (CH/FS/FO/CS left untouched in all three -- CH/FS because raw velocity
 # barely loads on their dominant axis of variation, making a PCA-derived
 # ratio-to-velocity unstable there; FO/CS because the season sample is only
@@ -281,10 +316,15 @@ VELO_WEIGHT_BELOW_AVG_OVERRIDE = {
 #     compounding changes at once produced the single largest swing of any
 #     pitch type (+110 display-score points for one pitcher in testing).
 #     Sanity-check this against real sweeper names before trusting it.
-#   - CU/KC's candidate IVB/horizontal weight bump is tangled up with the
-#     shape flip applied earlier, so isolate the weight's effect on its own
-#     before adding it (don't just drop in 1.22/0.14 and assume the
-#     shape-only reshuffling bounds measured at the time still apply).
+#   - CU/KC RESOLVED (2026-10): the candidate IVB/horizontal weight bump
+#     (1.22/0.14) was isolated from the earlier shape flip and tested on its
+#     own -- it was a near-no-op alone (max |delta| 7 across 303 CU/KC rows)
+#     but, combined with a velocity discount, actively punished real
+#     standout-horizontal-break pitchers (Matthew Boyd, Quinn Mathews) for
+#     their defining trait -- so the IVB/horizontal bump was REJECTED, and
+#     only a velocity discount shipped (VELO_WEIGHT_BELOW_AVG_OVERRIDE, 0.60
+#     -- see its definition above for the full writeup, including the
+#     Boyd/Mathews component breakdown that drove this decision).
 #   - CS (slow curve) hasn't been touched at all, shape or weight -- only 2
 #     pitchers league-wide throw a tracked slow curve this season, so any
 #     shape or weight call there (velocity/IVB/horizontal -> abs was floated
