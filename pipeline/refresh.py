@@ -261,7 +261,34 @@ VELO_WEIGHT_BELOW_AVG_OVERRIDE = {
     "FC": 0.50,
     "CU": 0.60,
     "KC": 0.60,
+    "SL": 0.35,
 }
+
+# SL's 0.35 (see VELO_SHAPE's SL note above for the full "abs" shape
+# rationale) was chosen from a full sweep of candidate discounts (0.95 down
+# to 0.0) against the real 2026-season SL population (443 qualifying rows):
+#   discount  mean|delta|  max|delta|  moved>=10   Sale(FF 519242)  Corbin(571578)
+#     0.95       6.88          87          56         113->169          68->121
+#     0.65       6.07          78          47         113->166          68->115
+#     0.50       5.61          73          41         113->164          68->111
+#     0.35       5.10          67          40         113->161          68->108
+#     0.20       4.57          61          38         113->158          68->103
+#     0.0        3.79          51          27         113->152          68->97
+# Unlike FC/CU/KC, the 0.0 floor itself already carries a large, legitimate
+# correction (undoing "signed"'s old penalty on real slow-slider outliers),
+# so there's no discount that shrinks the population-wide swing to single
+# digits the way FC/CU/KC's did. Given that, 0.35 was chosen to keep the
+# ADDITIONAL discretionary credit above that 0.0 floor conservative,
+# consistent with FC/CU/KC's discount-not-full-credit philosophy: it keeps
+# the moved->=10 count (40) close to the 0.50 setting's (41) rather than
+# climbing toward 56 at near-full credit (0.95), while still giving Sale and
+# Corbin real, visible recognition (161/108) short of full symmetric credit.
+# Named spot-check at 0.35 against the 10 pitchers from the arsenal-usage
+# review (Anderson, Taylor, Morillo, Martinez, Headrick, Ginn, Zeferjahn,
+# Sabrowski, Meyer, Tidwell) -- all above-average-velocity sliders -- showed
+# small, uniform -2 to -4 point nudges (the expected cost of no longer
+# getting full "signed" credit for throwing hard), confirming the change
+# tracks as intended rather than disturbing an unrelated archetype.
 
 # ---------------------------------------------------------------------------
 # OPEN ITEM (2026-10 model review): per-pitch-type re-weighting, paused.
@@ -526,8 +553,25 @@ IVB_SHAPE = {
 # penalizing the exact pitchers PC3 said should be recognized. Same "both
 # extremes can be elite" logic as CU/KC/FS above: a firm, hard cutter and
 # a slow, loopy, slider-like one can both be distinct weapons.
+#
+# Sliders switched signed -> abs (2026-10 model review, SL pass): same "both
+# extremes can be elite" logic as CU/KC/FC above, but the swing from making
+# this change is the largest of any pitch type reviewed so far (mean |delta|
+# 5.10, max |delta| 67, 40/443 pitchers moving >=10 points even WITH the
+# 0.35 discount below) -- driven by a handful of legitimately extreme
+# slow-slider archetypes (Chris Sale 79.7mph, Patrick Corbin 79.0mph, and
+# others in the 76-78mph range) sitting many standard deviations below a
+# tight league SL velocity distribution (mean 86.3, std 2.6). Important
+# mechanical note confirmed during testing: even at a FULLY NEUTRAL discount
+# (0.0, zero velocity credit for below-average rows), the swing floor is
+# still large (max |delta| 51, 27 movers >=10) -- most of the swing comes
+# from REMOVING the old "signed" shape's active penalty on these legitimate
+# outliers, not from adding new credit. So unlike FC/CU/KC, there's no
+# setting that reduces Sale/Corbin-magnitude moves to single digits; the
+# discount below (0.35) is a deliberate, conservative choice above that 0.0
+# floor, not an attempt to minimize the swing further.
 VELO_SHAPE = {
-    "CU": "abs", "KC": "abs", "FS": "abs", "FC": "abs",
+    "CU": "abs", "KC": "abs", "FS": "abs", "FC": "abs", "SL": "abs",
 }
 
 # Changeup velocity is scored as a blend of two things, rather than a single
