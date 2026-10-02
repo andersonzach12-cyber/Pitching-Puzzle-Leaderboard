@@ -164,6 +164,33 @@ SL_TO_ST_RECLASSIFY = {
     676879,  # Ashby, Aaron
 }
 
+# The mirror image of SL_TO_ST_RECLASSIFY above: specific pitchers' Savant-
+# tagged "sweeper" that, by the same depth-vs-no-depth criterion, is
+# functionally a slider (ST review, 2026-10). A nearest-centroid check run
+# the other direction (horizontal_in + ivb_in, against the real 2026-season
+# SL/ST centroids, post-SL_TO_ST_RECLASSIFY) flagged 20 of 309 ST rows as
+# sitting closer to SL's centroid than ST's own -- all "shallow break"
+# sweepers. Of those 20, this subset of 8 was selected by the same real-
+# example review (does the pitch visibly curve/dive through its path, not
+# just break along a straight-line axis out of the release point) as the
+# clearest slider-shaped cases; the remaining 12 were kept as ST. Full
+# pitcher-by-pitcher review in /areas/pitch-uniqueness-model.md.
+#
+# Applied the same way as SL_TO_ST_RECLASSIFY -- at the raw per-pitch-event
+# level before the groupby below -- so a pitcher here who already throws a
+# separate, distinct slider (Soriano, Singer, Pérez, Bachar) has this pitch
+# correctly MERGED into that same arsenal slot via the ordinary groupby/mean.
+ST_TO_SL_RECLASSIFY = {
+    666277,  # Soriano, George -- merges into his existing SL
+    663903,  # Singer, Brady -- merges into his existing SL
+    700712,  # Ureña, Walbert
+    661395,  # Duran, Jhoan
+    691587,  # Pérez, Eury -- merges into his existing SL
+    669199,  # Bachar, Lake -- merges into his existing SL
+    678394,  # Bello, Brayan
+    666200,  # Luzardo, Jesús
+}
+
 # Active-spin quotient shape per pitch type, matching the Excel model:
 #   "signed"     -> higher active spin is better (4-Seam, Cutter)
 #   "signed_neg" -> lower active spin is better (Sinker -- more seam-shifted
@@ -1017,6 +1044,18 @@ def _aggregate_pitch_events(events: pd.DataFrame, source_label: str) -> tuple[pd
               f"{reclass_mask.sum()} raw pitch events for "
               f"{df.loc[reclass_mask, 'player_id'].nunique()} pitcher(s).")
         df.loc[reclass_mask, "pitch_type"] = "ST"
+
+    # ST->SL hand reclassification -- the mirror image of the block just
+    # above (see ST_TO_SL_RECLASSIFY's definition above for the full
+    # rationale), applied the same way and for the same reason: a pitcher
+    # here who already throws a separate real slider gets this pitch
+    # correctly merged into that group via the ordinary aggregation below.
+    reclass_mask_st = df["player_id"].isin(ST_TO_SL_RECLASSIFY) & (df["pitch_type"] == "ST")
+    if reclass_mask_st.any():
+        print(f"ST->SL hand reclassification ({source_label}): remapping "
+              f"{reclass_mask_st.sum()} raw pitch events for "
+              f"{df.loc[reclass_mask_st, 'player_id'].nunique()} pitcher(s).")
+        df.loc[reclass_mask_st, "pitch_type"] = "SL"
 
     df["velo"] = pd.to_numeric(df[resolved["velo"]], errors="coerce")
     df["spin_rpm"] = pd.to_numeric(df[resolved["spin_rpm"]], errors="coerce")
