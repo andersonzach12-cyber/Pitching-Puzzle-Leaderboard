@@ -119,6 +119,51 @@ PITCH_TYPES = {
     "SV": {"label": "Slurve",          "group": "Slider"},
 }
 
+# Hand reclassification of specific pitchers' Savant-tagged "slider" to
+# "sweeper" (2026-10 model review, SL horizontal-weight pass). Savant's own
+# SL/ST tagging turned out to have a real gap for these pitchers: a
+# nearest-centroid check (horizontal_in + ivb_in, against the real
+# 2026-season SL/ST population centroids -- note IVB barely differs between
+# the two pitch types league-wide, mean 1.7 for SL vs 1.1 for ST, so
+# horizontal break is really the only thing separating them) flagged 28 of
+# 443 SL rows as sitting closer to ST's centroid than SL's own. Of those 28,
+# this subset of 11 was selected by real-example review, not distance alone
+# -- the guiding distinction (stated explicitly, not a derived rule): a
+# slider has real depth to its break, a sweeper doesn't, so the deciding
+# question for each candidate was whether the pitch visibly broke along a
+# single, roughly straight-line axis out of the release point (sweeper) or
+# curved/dove through its path (slider, even a sweepy one). This is
+# explicitly acknowledged as an imperfect, subjective call, not a clean
+# reproducible formula -- the remaining 17 (e.g. Chris Sale's, Mason
+# Miller's) were judged to retain genuine depth alongside the sweep, or were
+# simply less clear-cut, and were deliberately left as SL. Full pitcher-by-
+# pitcher review in /areas/pitch-uniqueness-model.md.
+#
+# Applied here, at the raw per-pitch-event level before _aggregate_pitch_events
+# groups by (player_id, pitch_type) -- NOT as a post-hoc relabel of an
+# already-aggregated row -- so a pitcher who already throws a separate,
+# distinct sweeper would have this pitch correctly MERGED into that same
+# arsenal slot via the ordinary groupby/mean, rather than producing an
+# impossible duplicate (player_id, season, "ST") row that the
+# (player_id, season, pitch_type) uniqueness constraint can't hold. (Nolan
+# McLean, 690997, was one of the original 12 candidates and did hit this
+# exact case -- he already throws a separate, distinct ST pitch -- but was
+# deliberately left OUT of this set: his slider and sweeper are kept as two
+# separate, distinct pitches rather than merged into one.)
+SL_TO_ST_RECLASSIFY = {
+    680704,  # Sandlin, Nick
+    676254,  # Walker, Ryan
+    657044,  # Thompson, Ryan
+    682825,  # Mey, Luis
+    643511,  # Rogers, Tyler
+    683363,  # Wilkinson, Matt
+    805427,  # Sommers, Drew
+    571927,  # Matz, Steven
+    806960,  # Morales, Luis
+    665622,  # Medina, Luis
+    676879,  # Ashby, Aaron
+}
+
 # Active-spin quotient shape per pitch type, matching the Excel model:
 #   "signed"     -> higher active spin is better (4-Seam, Cutter)
 #   "signed_neg" -> lower active spin is better (Sinker -- more seam-shifted
@@ -355,12 +400,21 @@ VELO_WEIGHT_BELOW_AVG_OVERRIDE = {
 #                          own definition above -- shipped at 0.60, not the
 #                          raw PCA candidate of 0.54), ST 1.46 (CU/KC's 1.22
 #                          candidate TESTED and REJECTED below, not applied)
-#   HORIZ_WEIGHT_OVERRIDE: SL 0.49 candidate still open (current shipped
-#                          value is 0.65; PCA suggests a cut is worth
-#                          testing next, same way IVB was), ST 1.56, SV 0.5
+#   HORIZ_WEIGHT_OVERRIDE: SL RESOLVED (2026-10, see HORIZ_WEIGHT_OVERRIDE's
+#                          own definition above -- the previous 0.65 had NO
+#                          fact-based derivation at all, discovered during
+#                          this review; re-swept from scratch and shipped at
+#                          0.49, matching the PCA candidate), ST 1.56, SV 0.5
 #                          (unchanged) (CU/KC's 0.14 candidate TESTED and
 #                          REJECTED below)
-#   ACTIVE_SPIN_WEIGHT:    SL 0.06, ST 0.23, SV 0.10 (unchanged) (CU/KC's
+#   ACTIVE_SPIN_WEIGHT:    SL 0.06, ST 0.23, SV 0.10 (unchanged) -- SL's
+#                          spin (both active-spin and raw spin_rpm) reviewed
+#                          2026-10 and found genuinely flat: even a full
+#                          sweep down to 0 produced max |delta| 2-3 across
+#                          443 rows, far below every other SL dimension's
+#                          effect size; deliberately left as-is pending a
+#                          larger, dedicated spin-across-all-pitch-types
+#                          conversation, not re-applied piecemeal here. (CU/KC's
 #                          0.11 candidate was never applied -- a ~no-op vs.
 #                          the existing 0.10, not worth a separate change)
 # (CH/FS/FO/CS left untouched in all three -- CH/FS because raw velocity
@@ -669,8 +723,27 @@ CH_IVB_RAW_WEIGHT = 0.3
 # specifically -- a pitcher's slider can be a weapon because of exceptional
 # sweep even with unremarkable depth, which the default fastball-tuned
 # weighting (where vertical movement dominates) badly undersells.
+#
+# SL 0.49 (2026-10 model review, SL horizontal-weight pass): the previous
+# value here, 0.65, turned out to have NO fact-based derivation behind it --
+# unlike every other weight in this file, it was never swept or spot-checked
+# against real data; it was a plausible-sounding number picked by feel when
+# IVB_SHAPE["SL"] was set to "abs" in an earlier commit. Re-derived from
+# scratch: swept 0.25 (the global default, i.e. "no SL-specific override at
+# all") up through 1.10 against the real 2026-season SL population, both
+# before and after the SL_TO_ST_RECLASSIFY move above (horizontal weight
+# turned out to matter a LOT for SL -- unlike SI's analogous check, which
+# found sweeping 0.25->0.65 was a near no-op -- so this is a real, not
+# cosmetic, decision). 0.49 was chosen as the point where genuine sweep/
+# break outliers (both directions -- extreme sweep and Sasaki-style
+# opposite-direction break) still get real, substantial recognition, while
+# population churn stays low (0 pitchers moved >=10 points vs. the 0.25
+# baseline, pre-reclassification; 2 moved >=10 post-reclassification, still
+# far gentler than 0.65's 3-5). 0.65 was the first weight on the sweep where
+# that stability broke down for marginal extra credit to the same handful of
+# outliers -- diminishing returns for real cost.
 HORIZ_WEIGHT_OVERRIDE = {
-    "SL": 0.65, "ST": 0.65, "SV": 0.5,
+    "SL": 0.49, "ST": 0.65, "SV": 0.5,
 }
 
 # Whether horizontal break should reward a specific direction ("signed" --
@@ -931,6 +1004,20 @@ def _aggregate_pitch_events(events: pd.DataFrame, source_label: str) -> tuple[pd
         raise RuntimeError(f"statcast_search: no 'pitch_type' column. Columns were: {list(df.columns)}")
 
     df = df[df["pitch_type"].isin(PITCH_TYPES.keys())].copy()
+
+    # SL->ST hand reclassification (see SL_TO_ST_RECLASSIFY's definition
+    # above for the full rationale) -- applied here, at the raw per-pitch-
+    # event level, BEFORE the groupby(player_id, pitch_type) below, so a
+    # pitcher who already throws a separate real sweeper (Nolan McLean) gets
+    # this pitch correctly merged into that same group via the ordinary
+    # aggregation rather than needing special-case merge logic of its own.
+    reclass_mask = df["player_id"].isin(SL_TO_ST_RECLASSIFY) & (df["pitch_type"] == "SL")
+    if reclass_mask.any():
+        print(f"SL->ST hand reclassification ({source_label}): remapping "
+              f"{reclass_mask.sum()} raw pitch events for "
+              f"{df.loc[reclass_mask, 'player_id'].nunique()} pitcher(s).")
+        df.loc[reclass_mask, "pitch_type"] = "ST"
+
     df["velo"] = pd.to_numeric(df[resolved["velo"]], errors="coerce")
     df["spin_rpm"] = pd.to_numeric(df[resolved["spin_rpm"]], errors="coerce")
     df["ivb_in"] = pd.to_numeric(df[resolved["ivb_in_raw"]], errors="coerce") * 12
