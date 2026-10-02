@@ -219,6 +219,51 @@ HORIZ_WEIGHT = 0.25
 SPIN_WEIGHT = 0.10
 DELIVERY_WEIGHT_IN_USCORE = 0.3
 
+# CH-specific override of SPIN_WEIGHT/spin's shape (2026-10 model review,
+# CH spin pass, done after the CH velocity/IVB/horizontal passes above).
+# Raw total spin (spin_rpm, distinct from active_spin_quotient/
+# ACTIVE_SPIN_WEIGHT -- that's spin EFFICIENCY, already its own typed
+# dimension) has NEVER had per-pitch-type shape or weight architecture
+# anywhere in this file -- every pitch type just used a flat, always-
+# signed zscore(spin_rpm) at the same global 0.10 weight, rewarding
+# higher spin unconditionally. For CH specifically, that direction is
+# wrong for HALF the real archetype: Morejon's and Logan Webb's
+# changeups (both independently regarded as elite, gold-standard
+# pitches) sit at the bottom of the CH spin distribution and were being
+# penalized hard for it (Morejon z=-2.28, one of the most extreme
+# penalties any CH dimension produced), while Devin Williams's
+# "Airbender" (also elite) sits at the top and was correctly rewarded.
+# Both archetypes are real and well-regarded; a one-directional reward
+# only recognized one of them. Shape flipped to abs (reward distance
+# from league-average spin in EITHER direction) -- the same fix already
+# applied to SL/SI/CU/KC's movement shapes for the same "two genuine
+# archetypes on opposite ends of one axis" reason.
+#
+# Weight: at the previous flat 0.10, even the shape fix alone only moved
+# scores mildly (mean|delta| 0.72, max 5, 0 pitchers >=10 vs. the old
+# signed treatment) -- real signal, but small. A sweep from 0.10 to 1.0
+# found CH spin has substantially MORE leverage than 0.10 was giving it
+# credit for once correctly shaped (mean|delta| climbing smoothly to
+# 3.50 and max|delta| to 19 by weight=1.0, with named extremes on both
+# sides -- Morejon, Webb, Logan Henderson, Devin Williams, Yoho -- all
+# moving the expected direction throughout). 0.5 was chosen as a
+# deliberate middle ground: real, visible credit for genuine extremes
+# (Morejon 98->107, Henderson 114->118, D. Williams 134->140, Yoho
+# 184->193) without pushing spin into the same major-dimension territory
+# as IVB_WEIGHT's 0.95 or ST's HORIZ_WEIGHT_OVERRIDE of 1.05 (only 3/400
+# pitchers move >=10 points at 0.5). Named near-average spin pitchers
+# (Munoz, Ureña) drift down modestly as a population-rank side effect,
+# not a direct penalty -- they simply don't participate in the growing
+# reward pool for genuine extremity the way the real outliers do.
+#
+# Flagged for revisit, not treated as final: this was derived from the
+# current single-season dataset. The planned uplift to add prior seasons
+# will change the population this was swept against, and CH spin's
+# weight (along with every other weight in this file) should be
+# re-checked once that larger dataset is in place rather than assumed to
+# still hold.
+CH_SPIN_WEIGHT = 0.5
+
 # Per-pitch-type override for how much vertical break (IVB) counts toward
 # the Ceiling formula, in place of the global IVB_WEIGHT -- the IVB
 # counterpart to HORIZ_WEIGHT_OVERRIDE below. Flat/symmetric (applies the
@@ -1851,8 +1896,15 @@ def compute_pitch_quotients(pitch_metrics: pd.DataFrame, active_spin_fallback: p
         elif HORIZ_SHAPE.get(pt) == "signed_neg":
             horiz_z = -horiz_z
         spin_z = zscore(group["spin_rpm"])
+        if pt == "CH":
+            # See CH_SPIN_WEIGHT's definition above for the full
+            # rationale -- both spin extremes contain real, independently
+            # elite CH archetypes, so distance from average in EITHER
+            # direction is rewarded, not just high spin.
+            spin_z = spin_z.abs()
         as_weight = ACTIVE_SPIN_WEIGHT.get(pt, 0.0)
         horiz_weight = HORIZ_WEIGHT_OVERRIDE.get(pt, HORIZ_WEIGHT)
+        spin_weight = CH_SPIN_WEIGHT if pt == "CH" else SPIN_WEIGHT
 
         # Most pitch types use a single flat IVB_WEIGHT for every row. A
         # pitch type listed in IVB_WEIGHT_BELOW_AVG_OVERRIDE (FF) or
@@ -1900,7 +1952,7 @@ def compute_pitch_quotients(pitch_metrics: pd.DataFrame, active_spin_fallback: p
             velo_weight * velo_z
             + ivb_weight * ivb_z
             + horiz_weight * horiz_z
-            + SPIN_WEIGHT * spin_z
+            + spin_weight * spin_z
             + as_weight * group["active_spin_quotient"]
         )
         # Release characteristics (extension, arm angle, release point) make
@@ -2065,7 +2117,12 @@ def compute_daily_display_scores(daily_agg: pd.DataFrame, pitch_metrics: pd.Data
             horiz_z = -horiz_z
 
         spin_z = _season_pop_zscore(day_group["spin_rpm"], season_group["spin_rpm"])
+        if pt == "CH":
+            # See CH_SPIN_WEIGHT's definition in compute_pitch_quotients
+            # for the full rationale.
+            spin_z = spin_z.abs()
         horiz_weight = HORIZ_WEIGHT_OVERRIDE.get(pt, HORIZ_WEIGHT)
+        spin_weight = CH_SPIN_WEIGHT if pt == "CH" else SPIN_WEIGHT
 
         # Same per-row conditional IVB weight as compute_pitch_quotients --
         # see IVB_WEIGHT_BELOW_AVG_OVERRIDE's and
@@ -2098,7 +2155,7 @@ def compute_daily_display_scores(daily_agg: pd.DataFrame, pitch_metrics: pd.Data
             velo_weight = 1.0
 
         day_group["ceiling"] = (
-            velo_weight * velo_z + ivb_weight * ivb_z + horiz_weight * horiz_z + SPIN_WEIGHT * spin_z
+            velo_weight * velo_z + ivb_weight * ivb_z + horiz_weight * horiz_z + spin_weight * spin_z
         )
 
         day_group = day_group.merge(
