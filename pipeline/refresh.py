@@ -147,6 +147,42 @@ HORIZ_WEIGHT = 0.25
 SPIN_WEIGHT = 0.10
 DELIVERY_WEIGHT_IN_USCORE = 0.3
 
+# Per-pitch-type override for how much vertical break (IVB) counts toward
+# the Ceiling formula, in place of the global IVB_WEIGHT -- the IVB
+# counterpart to HORIZ_WEIGHT_OVERRIDE below. Flat/symmetric (applies the
+# same on both sides of league-average IVB), unlike
+# IVB_WEIGHT_BELOW_AVG_OVERRIDE/IVB_WEIGHT_ABOVE_AVG_OVERRIDE's
+# direction-conditional discount above.
+#
+# SL 0.60 (2026-10 model review, SL IVB pass): sliders already carry a
+# boosted HORIZ_WEIGHT_OVERRIDE (0.65, vs. the 0.25 global default) on the
+# premise that horizontal sweep is a slider's primary defining trait; this
+# is the other half of that same statement -- vertical depth is real and
+# meaningfully valuable, but secondary, so it's discounted from the
+# fastball-tuned 0.95 rather than left at full weight. Chosen from a sweep
+# of candidates (0.95/0.70/0.60/0.54/0.40/0.0) against the real 2026-season
+# SL population (443 rows, on top of the already-shipped SL velocity
+# change): population effect is mild at 0.60 (mean |delta| 1.12, max
+# |delta| 7, 0/443 pitchers moving >=10 points) -- much gentler than the
+# velocity change, since IVB's existing "abs" shape (see IVB_SHAPE below)
+# was already symmetric, so this only rescales an existing term rather than
+# flipping its direction. The PCA-derived candidate was 0.54; 0.60 was
+# chosen instead as a deliberate middle ground, giving genuine depth
+# outliers (e.g. player_id 681544 at -10.3in IVB, one of the largest in the
+# league) slightly more residual credit than the raw PCA ratio would, while
+# still meaningfully shifting weight toward horizontal/velocity for the
+# average slider. Named spot-check: player_id 690925 (-5.9in IVB, 50.5%
+# usage, otherwise average velocity/horizontal) drops 110->105 (-5) --a
+# real but modest cost, not the kind of "punished for a defining trait"
+# result that sank CU/KC's movement-weight bump (that case involved losses
+# of -6/-9 on pitchers whose ENTIRE value proposition was the bumped
+# dimension; here, no single pitcher crosses -10, and the pitchers who lose
+# the most (681544 -6, 641793 -5) are still left with real, substantial IVB
+# credit at 0.60, not a near-zeroing-out).
+IVB_WEIGHT_OVERRIDE = {
+    "SL": 0.60,
+}
+
 # Per-pitch-type override: when a pitch type's IVB shape is "abs" (reward
 # distance from league-average IVB in EITHER direction -- see IVB_SHAPE
 # below) AND that pitch type is listed here, IVB_WEIGHT applies ONLY to
@@ -314,11 +350,16 @@ VELO_WEIGHT_BELOW_AVG_OVERRIDE = {
 # writeup.
 #
 # Candidate weights from the PCA pass, for the remaining untouched pitch
-# types (SL/ST/SV next, given FF/SI/FC/CU/KC are now done):
-#   IVB_WEIGHT_OVERRIDE:   SL 0.54, ST 1.46 (CU/KC's 1.22 candidate TESTED
-#                          and REJECTED below, not applied)
-#   HORIZ_WEIGHT_OVERRIDE: SL 0.49, ST 1.56, SV 0.5 (unchanged) (CU/KC's
-#                          0.14 candidate TESTED and REJECTED below)
+# types (ST/SV next, given FF/SI/FC/CU/KC/SL are now done):
+#   IVB_WEIGHT_OVERRIDE:   SL RESOLVED (2026-10, see IVB_WEIGHT_OVERRIDE's
+#                          own definition above -- shipped at 0.60, not the
+#                          raw PCA candidate of 0.54), ST 1.46 (CU/KC's 1.22
+#                          candidate TESTED and REJECTED below, not applied)
+#   HORIZ_WEIGHT_OVERRIDE: SL 0.49 candidate still open (current shipped
+#                          value is 0.65; PCA suggests a cut is worth
+#                          testing next, same way IVB was), ST 1.56, SV 0.5
+#                          (unchanged) (CU/KC's 0.14 candidate TESTED and
+#                          REJECTED below)
 #   ACTIVE_SPIN_WEIGHT:    SL 0.06, ST 0.23, SV 0.10 (unchanged) (CU/KC's
 #                          0.11 candidate was never applied -- a ~no-op vs.
 #                          the existing 0.10, not worth a separate change)
@@ -1348,16 +1389,23 @@ def compute_pitch_quotients(pitch_metrics: pd.DataFrame, active_spin_fallback: p
         # its own gap-blend composite (see above), not a plain
         # shape-flagged z-score, so this conditional-discount concept
         # doesn't apply to it.
+        # Flat/symmetric per-pitch-type override (IVB_WEIGHT_OVERRIDE, SL's
+        # 0.60 so far) in place of the global IVB_WEIGHT -- resolved first so
+        # the direction-conditional dicts below layer on top of the right
+        # base weight rather than always falling back to the fastball-tuned
+        # global default. Mutually exclusive in practice with the two dicts
+        # below (no pitch type listed in both as of this change).
+        base_ivb_weight = IVB_WEIGHT_OVERRIDE.get(pt, IVB_WEIGHT)
         below_avg_ivb_weight = IVB_WEIGHT_BELOW_AVG_OVERRIDE.get(pt)
         above_avg_ivb_weight = IVB_WEIGHT_ABOVE_AVG_OVERRIDE.get(pt)
         if pt != "CH" and below_avg_ivb_weight is not None:
-            ivb_weight = pd.Series(IVB_WEIGHT, index=group.index)
+            ivb_weight = pd.Series(base_ivb_weight, index=group.index)
             ivb_weight[ivb_z_raw < 0] = below_avg_ivb_weight
         elif pt != "CH" and above_avg_ivb_weight is not None:
-            ivb_weight = pd.Series(IVB_WEIGHT, index=group.index)
+            ivb_weight = pd.Series(base_ivb_weight, index=group.index)
             ivb_weight[ivb_z_raw >= 0] = above_avg_ivb_weight
         else:
-            ivb_weight = IVB_WEIGHT
+            ivb_weight = base_ivb_weight
 
         # Velocity's own conditional weight, the mirror of the IVB one just
         # above -- see VELO_WEIGHT_BELOW_AVG_OVERRIDE's definition for the
@@ -1520,16 +1568,17 @@ def compute_daily_display_scores(daily_agg: pd.DataFrame, pitch_metrics: pd.Data
         # "Below"/"above" average here means relative to the SEASON
         # population's mean, consistent with every other z-score in this
         # daily function.
+        base_ivb_weight = IVB_WEIGHT_OVERRIDE.get(pt, IVB_WEIGHT)
         below_avg_ivb_weight = IVB_WEIGHT_BELOW_AVG_OVERRIDE.get(pt)
         above_avg_ivb_weight = IVB_WEIGHT_ABOVE_AVG_OVERRIDE.get(pt)
         if pt != "CH" and below_avg_ivb_weight is not None:
-            ivb_weight = pd.Series(IVB_WEIGHT, index=day_group.index)
+            ivb_weight = pd.Series(base_ivb_weight, index=day_group.index)
             ivb_weight[ivb_z_raw < 0] = below_avg_ivb_weight
         elif pt != "CH" and above_avg_ivb_weight is not None:
-            ivb_weight = pd.Series(IVB_WEIGHT, index=day_group.index)
+            ivb_weight = pd.Series(base_ivb_weight, index=day_group.index)
             ivb_weight[ivb_z_raw >= 0] = above_avg_ivb_weight
         else:
-            ivb_weight = IVB_WEIGHT
+            ivb_weight = base_ivb_weight
 
         # Same per-row conditional velocity weight as compute_pitch_quotients
         # -- see VELO_WEIGHT_BELOW_AVG_OVERRIDE's definition for the
