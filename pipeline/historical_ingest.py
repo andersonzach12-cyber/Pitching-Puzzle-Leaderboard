@@ -62,6 +62,8 @@ from refresh import (
     MIN_PITCHES,
     MIN_SEASON_PITCHES_TO_QUALIFY,
     PITCH_TYPES,
+    SL_TO_ST_RECLASSIFY,
+    ST_TO_SL_RECLASSIFY,
     build_delivery_quotients,
     compute_pitch_quotients,
 )
@@ -117,6 +119,69 @@ def build_delivery_from_arsenal(path: str, season: int) -> pd.DataFrame:
     return out
 
 
+def _apply_sl_st_reclassification(df: pd.DataFrame, season: int) -> pd.DataFrame:
+    """Mirror refresh.py's live SL<->ST hand reclassification (see
+    SL_TO_ST_RECLASSIFY/ST_TO_SL_RECLASSIFY in refresh.py -- specific
+    pitchers whose Savant-tagged pitch type doesn't match its actual
+    depth-vs-no-depth shape, e.g. Tyler Rogers' "slider" that's really a
+    sweeper). The live pipeline applies this at the raw per-pitch-event
+    level, before _aggregate_pitch_events groups by (player_id, pitch_type),
+    so a reclassified pitch that collides with a pitcher's pre-existing
+    pitch of the destination type gets folded into that same arsenal slot
+    via the ordinary groupby/mean rather than producing an impossible
+    duplicate (player_id, season, pitch_type) row.
+
+    historical_ingest has no raw per-pitch-event stream to apply this to --
+    Savant's arsenal export arrives already aggregated to one row per
+    (pitcher, pitch_type, season). This relabels the affected rows and then
+    merges any resulting duplicates the same pitches-weighted way: a
+    weighted mean of two already pitches-weighted means, re-weighted by
+    their own pitch counts, equals the single weighted mean over the
+    combined raw events, so this is mathematically identical to applying
+    the live reclassification before aggregation, not an approximation of
+    it. Only the specific player_ids in those two sets are touched --
+    everyone else's rows pass through unchanged. Added 2026-10 after the ST
+    review surfaced that this historical ingest had been missing the
+    reclassification entirely (it was built, and the SL/ST passes were
+    both run, before this gap was noticed)."""
+    df = df.copy()
+    df.loc[
+        df["player_id"].isin(SL_TO_ST_RECLASSIFY) & (df["pitch_type"] == "SL"), "pitch_type"
+    ] = "ST"
+    df.loc[
+        df["player_id"].isin(ST_TO_SL_RECLASSIFY) & (df["pitch_type"] == "ST"), "pitch_type"
+    ] = "SL"
+
+    dup_mask = df.duplicated(subset=["player_id", "pitch_type"], keep=False)
+    if not dup_mask.any():
+        return df
+
+    dups = df[dup_mask]
+    singles = df[~dup_mask]
+    merged_rows = []
+    for (pid, pt), group in dups.groupby(["player_id", "pitch_type"]):
+        w = group["n_pitches"]
+        wsum = w.sum()
+        total_pitches = group["total_pitches"].iloc[0]
+        merged_rows.append({
+            "player_id": pid,
+            "player_name": group["player_name"].iloc[0],
+            "season": season,
+            "pitch_type": pt,
+            "velo": (group["velo"] * w).sum() / wsum,
+            "spin_rpm": (group["spin_rpm"] * w).sum() / wsum,
+            "ivb_in": (group["ivb_in"] * w).sum() / wsum,
+            "horizontal_in": (group["horizontal_in"] * w).sum() / wsum,
+            "n_pitches": wsum,
+            "total_pitches": total_pitches,
+            "usage_rate": wsum / total_pitches,
+        })
+        print(f"[{season}] SL/ST reclass: merged player {pid} ({group['player_name'].iloc[0]}) "
+              f"{pt}: {len(group)} rows -> 1 ({wsum:.0f} combined pitches).")
+    merged = pd.DataFrame(merged_rows, columns=singles.columns)
+    return pd.concat([singles, merged], ignore_index=True)
+
+
 def load_arsenal_csv(path: str, season: int) -> pd.DataFrame:
     """Normalize one season's Savant pitch-arsenal export into the same
     column shape refresh.py's live _aggregate_pitch_events() produces:
@@ -147,6 +212,13 @@ def load_arsenal_csv(path: str, season: int) -> pd.DataFrame:
     df["total_pitches"] = pd.to_numeric(df["total_pitches"], errors="coerce")
     df["player_id"] = pd.to_numeric(df["player_id"], errors="coerce").astype("Int64")
     df["season"] = season
+
+    cols_pre_filter = ["player_id", "player_name", "season", "pitch_type", "velo", "spin_rpm",
+                        "ivb_in", "horizontal_in", "usage_rate", "n_pitches", "total_pitches"]
+    # Reclassify/merge before the quality filters below, same ordering as
+    # the live pipeline (reclassification happens before aggregation-level
+    # filtering there too) -- see _apply_sl_st_reclassification's docstring.
+    df = _apply_sl_st_reclassification(df[cols_pre_filter], season)
 
     before = df["player_id"].nunique()
     df = df[df["total_pitches"] >= MIN_SEASON_PITCHES_TO_QUALIFY].copy()
