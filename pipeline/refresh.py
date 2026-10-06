@@ -351,14 +351,34 @@ FS_SPIN_HIGH_DISCOUNT = 0.5
 # velocity pass): this value had the exact same unvalidated provenance as
 # SL/ST's old 0.65 -- introduced in the same commit, with no sweep or
 # spot-check behind it. Unlike SL/ST, re-deriving it from scratch did NOT
-# produce a different answer: swept 0.25 through 1.56 against the real
-# 15-pitcher SV population and found the dimension genuinely low-leverage
-# at this sample size -- even tripling the weight to 1.0 moves the single
-# biggest mover (Sean Newcomb, -17.8in) by only 6 points, and it takes the
-# full 1.56 PCA candidate before even one pitcher crosses a 10-point move
-# (Newcomb +10). Same conclusion as SL's spin review: checked carefully,
-# found flat, left as-is -- 0.5 is now a confirmed value, not an inherited
-# guess.
+# produce a different answer at the time: swept 0.25 through 1.56 against
+# the real 15-pitcher 2026-season SV population and found the dimension
+# genuinely low-leverage at that sample size -- even tripling the weight to
+# 1.0 moved the single biggest mover (Sean Newcomb, -17.8in) by only 6
+# points. Checked carefully, found flat, left as-is.
+#
+# SV 0.5 -> 0.7 (2026-10 model review, historical-data re-validation pass,
+# done after SL/ST/SV's single-season reviews above): re-swept against the
+# 9-season historical dataset (77 pitcher-seasons, 2017-2025) once that
+# became available, and the "genuinely flat" read above turned out to be a
+# small-sample artifact, not a property of the dimension -- the SV
+# population grew from 4-7 pitchers/season in 2017-2021 to 9-15 in
+# 2022-2025, and splitting the sweep by era showed most of the apparent
+# movement in the full 9-season pool was concentrated in those thin early
+# seasons (unstable in-season z-scores from a 4-5 pitcher population), not
+# a real signal. Restricting to the more trustworthy 2022-2025 subset
+# (n=51) showed a real but modest, gradual effect: 0 movers >=10 points
+# through 0.7, climbing to 7/51 by 1.56. 0.7 was chosen from that reliable
+# subset as the point giving real, visible extra credit to genuine
+# extreme-sweep outliers (Sean Newcomb -16.6 to -17.0in, 2025 Marcus
+# Stroman -16.56in -- a real change from his earlier, shallower-break
+# seasons -- vs. the -12.4in recent-era average) while staying at zero
+# double-digit movers in the reliable data; the modest losers at this
+# weight (Ferguson -7, Oller -6) aren't devastated, landing at 95-113,
+# because they have other real traits (spin, IVB) carrying them -- the same
+# pattern SL/ST's horizontal passes found. Still the smallest population in
+# the model (51 reliable pitcher-seasons) -- worth revisiting again as
+# more seasons accumulate.
 #
 # ST 1.46 (2026-10 model review, ST IVB pass, done after the ST velocity
 # pass above and after both SL<->ST reclassifications): tested against the
@@ -1258,7 +1278,7 @@ CH_IVB_RAW_ABOVE_AVG_DISCOUNT = 0.5
 # are the more clearly defining traits. Left at 0.25, confirmed rather
 # than untouched.
 HORIZ_WEIGHT_OVERRIDE = {
-    "SL": 0.49, "ST": 1.05, "SV": 0.5,
+    "SL": 0.49, "ST": 1.05, "SV": 0.7,
 }
 
 # Whether horizontal break should reward a specific direction ("signed" --
