@@ -293,9 +293,35 @@ ACTIVE_SPIN_SHAPE = {
 # independent signal elsewhere for active spin's marginal share to compete
 # against) -- max display-score movement 2-4 points at this weight, no
 # named pitcher moving double digits.
+#
+# FS 0.10 -> 0.25 (2026-10 model review, active-spin pass, fourth pitch
+# type, done right after CH). Also "abs"-shaped like CH, which raised the
+# same double-counting question -- but the audit came out clean, for a
+# different reason than FF/SI's near-zero correlations: there IS a real
+# correlation between active spin and the already-credited horizontal term
+# (r=-0.47 overall, concentrated on the low-active-spin side at r=-0.52),
+# but it runs the OPPOSITE direction from CH's problem. CH's low side
+# double-counted because low active spin correlated with MORE of the
+# already-credited horizontal fade. FS's low side instead correlates with
+# LESS horizontal movement -- named check confirms this is the real,
+# distinct "dead-spin"/gyro splitter archetype (Fernando Cruz 39.3% active
+# spin: 4.56in horizontal, 0.12in IVB, 838rpm -- minimal movement on any
+# axis, not a fade-heavy pitch already paid for elsewhere), so crediting
+# it via active spin adds independent signal rather than paying twice for
+# the same one. IVB (r=0.04), velo (r=0.14), and raw spin (r=0.15) all
+# clean too, same as FF/SI's own audits. Shape kept as flat "abs", no
+# asymmetric discount needed (unlike CH) -- this is a magnitude-only
+# change, same as FF/SI's passes.
+#
+# Weight swept 0.0-1.0 (mean|delta| climbing from 0.00 at the old 0.10 to
+# 2.43 at 1.0, real named leverage throughout, e.g. Cruz -- the clearest
+# legitimate beneficiary, already elite at 149 -- gaining to 155 at 0.25).
+# 0.25 chosen for consistency with FF/SI/CH's shared weight: mean|delta|
+# 0.58, max|delta| 6, only one pitcher (Cruz) crossing +/-5, nobody
+# crossing +/-10.
 ACTIVE_SPIN_WEIGHT = {
     "FF": 0.25, "SI": 0.25, "FC": 0.05,
-    "CH": 0.25, "FS": 0.10, "FO": 0.0,
+    "CH": 0.25, "FS": 0.25, "FO": 0.0,
     "CU": 0.10, "KC": 0.0, "CS": 0.0,
     "SL": 0.10, "ST": 0.10, "SV": 0.10,
 }
