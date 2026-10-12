@@ -1870,17 +1870,23 @@ def fetch_yesterdays_pitch_events() -> pd.DataFrame:
     return out
 
 
-def _aggregate_pitch_events(events: pd.DataFrame, source_label: str) -> tuple[pd.DataFrame, pd.DataFrame]:
+def _aggregate_pitch_events(events: pd.DataFrame, source_label: str) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Shared core behind both the season aggregation
     (compute_pitch_metrics_from_events) and the single-day aggregation
     (compute_daily_pitch_aggregates): Savant column resolution, handedness-
     normalized horizontal break, and the groupby(player_id, pitch_type)
-    itself. Returns (grouped, extension); grouped has one row per
+    itself. Returns (grouped, extension, handedness); grouped has one row per
     (player_id, pitch_type) with mean velo/spin_rpm/ivb_in/horizontal_in,
     n_pitches, total_pitches, and usage_rate -- deliberately UNFILTERED by
     any sample-size floor, since the season and daily callers each apply a
     different one (MIN_PITCHES/MIN_SEASON_PITCHES_TO_QUALIFY vs.
-    DAILY_MIN_PITCHES)."""
+    DAILY_MIN_PITCHES). handedness is one row per player_id with p_throws
+    ("R"/"L") -- the same field already used below to handedness-normalize
+    horizontal_in, surfaced here too so build_delivery_quotients can apply
+    the identical normalization to horizontal_release_ft (see that
+    function's docstring for why the arm-angle leaderboard needs this
+    passed in rather than reading its own p_throws column -- it doesn't
+    have one)."""
     df = normalize_player_id(events, source_label)
 
     def first_present(candidates: list[str]) -> str | None:
@@ -1974,16 +1980,25 @@ def _aggregate_pitch_events(events: pd.DataFrame, source_label: str) -> tuple[pd
     else:
         extension = ext.groupby("player_id")["extension_ft"].mean().reset_index()
 
-    return grouped, extension
+    # p_throws is constant per pitcher within a season -- first() per
+    # player_id is enough, no need to re-derive a mode.
+    handedness = (
+        df[["player_id", "p_throws"]]
+        .assign(p_throws=lambda d: d["p_throws"].astype(str).str.upper())
+        .drop_duplicates(subset=["player_id"], keep="first")
+    )
+
+    return grouped, extension, handedness
 
 
-def compute_pitch_metrics_from_events(events: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+def compute_pitch_metrics_from_events(events: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Aggregate raw pitch-level rows into (a) one row per pitcher per pitch
-    type with average velo/spin/movement/usage, and (b) one row per pitcher
-    with a usage-weighted average extension. Season-long: filters out
-    position players (too few total pitches) and individual pitch types
-    thrown too rarely to trust (MIN_PITCHES)."""
-    grouped, extension = _aggregate_pitch_events(events, "statcast_search")
+    type with average velo/spin/movement/usage, (b) one row per pitcher with
+    a usage-weighted average extension, and (c) one row per pitcher with
+    p_throws. Season-long: filters out position players (too few total
+    pitches) and individual pitch types thrown too rarely to trust
+    (MIN_PITCHES)."""
+    grouped, extension, handedness = _aggregate_pitch_events(events, "statcast_search")
 
     n_before_position_player_filter = grouped["player_id"].nunique()
     grouped = grouped[grouped["total_pitches"] >= MIN_SEASON_PITCHES_TO_QUALIFY].copy()
@@ -1999,7 +2014,7 @@ def compute_pitch_metrics_from_events(events: pd.DataFrame) -> tuple[pd.DataFram
         "player_id", "pitch_type", "velo", "spin_rpm", "ivb_in", "horizontal_in",
         "usage_rate", "active_spin_pct",
     ]]
-    return pitch_metrics, extension
+    return pitch_metrics, extension, handedness
 
 
 def compute_daily_pitch_aggregates(events: pd.DataFrame) -> pd.DataFrame:
@@ -2010,7 +2025,7 @@ def compute_daily_pitch_aggregates(events: pd.DataFrame) -> pd.DataFrame:
     reuses the season's own usage_rate/delivery_modifier/fastball_baseline
     rather than computing day-specific versions of those (see
     compute_daily_display_scores), so none of that filtering applies here."""
-    grouped, _ = _aggregate_pitch_events(events, "statcast_search (daily)")
+    grouped, _, _ = _aggregate_pitch_events(events, "statcast_search (daily)")
     grouped = grouped[grouped["n_pitches"] >= DAILY_MIN_PITCHES].copy()
     return grouped[["player_id", "pitch_type", "velo", "spin_rpm", "ivb_in", "horizontal_in", "n_pitches"]]
 
@@ -2211,14 +2226,42 @@ DELIVERY_MODIFIER_MAX = 1.20
 # same trait, credited twice today.
 # Extension and horizontal_release_ft stay independent of everything
 # (r<=0.14 against every other component) and keep full weight.
-# Chose a 0.5 discount on both arm_angle and release_height (rather than
-# dropping release_height to 0) because the overlap is real but not total --
-# r=0.73 leaves real independent variance in release_height beyond what arm
-# angle alone explains, concentrated in the moderate (non-outlier) part of
-# the population since the extreme cases (Rogers, Thompson, Hill) are
-# already pinned at DELIVERY_MODIFIER_MAX either way and don't move.
-# Mirrors the same "discount the overlap, don't delete the term" precedent
-# as CH_AS_LOW_DISCOUNT and CH_IVB_RAW_ABOVE_AVG_DISCOUNT.
+# Chose an initial 0.5/0.5 discount on both arm_angle and release_height
+# (rather than dropping release_height to 0) because the overlap is real
+# but not total -- r=0.73 leaves real independent variance in release_height
+# beyond what arm angle alone explains, concentrated in the moderate
+# (non-outlier) part of the population since the extreme cases (Rogers,
+# Thompson, Hill) are already pinned at DELIVERY_MODIFIER_MAX either way and
+# don't move. Mirrors the same "discount the overlap, don't delete the term"
+# precedent as CH_AS_LOW_DISCOUNT and CH_IVB_RAW_ABOVE_AVG_DISCOUNT.
+#
+# REVISITED same day, 0.5/0.5 -> 0.3/0.7 (arm_angle/release_height). The
+# variance-overlap math is symmetric by construction (arm_angle explains
+# 66.8% of release_height's variance, and release_height explains the exact
+# same 66.8% of arm_angle's -- a correlation coefficient can't tell you
+# which one is "more redundant"), so this split isn't a redundancy-audit
+# conclusion the way the 0.5/0.5 starting point was. It's a judgment call,
+# backed by named evidence: within the SAME arm-angle bucket (~51-55 deg),
+# real release-height spread of nearly 1.5ft shows up --
+#   Verlander, Justin (54.1 deg): 6.98ft   Wells, Tyler (52.5 deg): 7.04ft
+#   Varland, Gus      (51.3 deg): 5.32ft   Finnegan, Kyle (51.7 deg): 5.65ft
+# Verlander/Wells are well-known tall, long-levered arms releasing well
+# above what their arm angle alone predicts; Varland/Finnegan sit at
+# essentially the same slot but release at an unremarkable height. That's
+# real signal -- plausibly pitcher height and how far down the mound a
+# pitcher gets before release -- that arm_angle alone can't see, and
+# release_height is judged the richer, more inclusive measurement of the
+# two (arm slot *and* height *and* stride depth all show up in it, where
+# arm_angle is a narrower geometric descriptor). Swept 0.4/0.6 through
+# 0.2/0.8 against the real qualified population (n=715): 0.4/0.6 barely
+# moved anything (17/715 >=0.02); 0.3/0.7 moved 142/715 (max loss -0.06,
+# max gain +0.05) with the named pattern landing exactly as predicted
+# (Verlander/Wells/Fairbanks gain, Finnegan/Varland lose); 0.2/0.8 moved
+# 227/715 (max loss -0.09, max gain +0.07). 0.3/0.7 chosen over 0.25/0.75
+# or 0.2/0.8 as the more conservative option given the softer, judgment-
+# call nature of the evidence here (vs. e.g. extension/velocity's much
+# cleaner redundancy finding) -- arm_angle keeps real, non-trivial weight
+# rather than being reduced to a minor leftover share.
 #
 # horizontal_release_ft -- also reviewed, checked against the already-
 # credited per-pitch horizontal movement term (not just the other delivery
@@ -2269,13 +2312,17 @@ EXTENSION_LOW_DISCOUNT = 0.5
 
 DELIVERY_COMPONENT_WEIGHT = {
     "extension_ft": 1.0,
-    "arm_angle_deg": 0.5,
-    "release_height_ft": 0.5,
+    "arm_angle_deg": 0.3,
+    "release_height_ft": 0.7,
     "horizontal_release_ft": 1.0,
 }
 
 
-def build_delivery_quotients(pitch_metrics_player_ids: pd.Series, delivery: pd.DataFrame) -> pd.DataFrame:
+def build_delivery_quotients(
+    pitch_metrics_player_ids: pd.Series,
+    delivery: pd.DataFrame,
+    handedness: pd.DataFrame | None = None,
+) -> pd.DataFrame:
     """One row per pitcher with delivery z-scores, delivery_quotient/
     adj_delivery_quotient, and a bounded delivery_modifier -- shared by both
     the per-pitch quotient (as a multiplier, since an unusual release point
@@ -2292,6 +2339,31 @@ def build_delivery_quotients(pitch_metrics_player_ids: pd.Series, delivery: pd.D
     sources first, then left-merge delivery's fields onto it -- pitchers
     missing from the arm-angle export just get a neutral (1.0) modifier and
     blank delivery metrics rather than being dropped entirely.
+
+    `handedness` (optional: player_id, p_throws) -- reviewed 2026-10-12.
+    horizontal_release_ft is a raw release-point X coordinate, measured the
+    same way Statcast's raw horizontal-BREAK column is: from the catcher's
+    perspective, not relative to which arm threw the pitch. That's exactly
+    the problem horizontal_in (the movement term, see _aggregate_pitch_events)
+    was already fixed for -- the same bug had just never been caught here,
+    because the arm-angle leaderboard this comes from doesn't carry its own
+    p_throws column to catch it with. Confirmed real, not a guess: the
+    population's horizontal_release_ft distribution is cleanly bimodal
+    (two separate peaks, not one bell curve), and cross-checking against
+    pitchers with known handedness lines up perfectly -- every left-handed
+    pitcher checked landed positive, every right-handed pitcher checked
+    landed negative (Messick, Valdez, Bubic positive/LHP; Armstrong,
+    Lawrence negative/RHP; 5/5). Without a flip, a perfectly ordinary
+    release point for one hand can look like a meaningful uniqueness signal
+    purely from being compared against a population mean that's a blend of
+    two mirror-image groups.
+    `handedness` is optional and defaults to None (no flip applied) because
+    the historical arsenal-export reconstruction this function is also used
+    for (historical_ingest.build_delivery_from_arsenal) has no p_throws
+    column available to source it from -- same "can't normalize what we
+    don't have" handling as a pitcher missing from the arm-angle leaderboard
+    entirely. The live pipeline (run(), below) has real p_throws for every
+    pitch and passes it through.
     """
     known_ids = set(delivery["player_id"])  # players actually present on the arm-angle leaderboard
 
@@ -2301,6 +2373,19 @@ def build_delivery_quotients(pitch_metrics_player_ids: pd.Series, delivery: pd.D
     )
     base = pd.DataFrame({"player_id": all_player_ids})
     delivery = base.merge(delivery, on="player_id", how="left")
+
+    if handedness is not None and not handedness.empty:
+        delivery = delivery.merge(handedness, on="player_id", how="left")
+        is_rhp = delivery["p_throws"].astype(str).str.upper().eq("R")
+        # Same flip convention as horizontal_in: negate for right-handers so
+        # the sign consistently means the same side of the mound for
+        # everyone. A pitcher with no known hand (not on this season's
+        # per-pitch fetch at all) is left unflipped -- same as a pitcher
+        # missing from the arm-angle leaderboard getting a neutral reading
+        # rather than a guess.
+        delivery["horizontal_release_ft"] = delivery["horizontal_release_ft"].where(
+            ~is_rhp, -delivery["horizontal_release_ft"]
+        )
 
     for col in ["extension_ft", "arm_angle_deg", "release_height_ft", "horizontal_release_ft"]:
         # fillna(0) on the z-score itself (not the raw metric) treats a
@@ -2933,7 +3018,7 @@ def run():
 
     try:
         events = fetch_pitch_events()
-        pitch_metrics_raw, extension_from_events = compute_pitch_metrics_from_events(events)
+        pitch_metrics_raw, extension_from_events, handedness_from_events = compute_pitch_metrics_from_events(events)
         active_spin = fetch_active_spin()
         delivery = fetch_delivery_metrics()
 
@@ -2974,7 +3059,7 @@ def run():
         # z-scores and modifier feed both the per-pitch quotient (as a
         # multiplier) and the pitchers table's own delivery columns without
         # computing them twice or letting the two drift apart.
-        delivery_full = build_delivery_quotients(pitch_metrics_raw["player_id"], delivery)
+        delivery_full = build_delivery_quotients(pitch_metrics_raw["player_id"], delivery, handedness_from_events)
 
         pitch_metrics = compute_pitch_quotients(pitch_metrics_raw, active_spin, delivery_full)
         pitch_metrics["season"] = SEASON  # required by the pitch_metrics table's NOT NULL constraint
