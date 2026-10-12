@@ -2310,8 +2310,40 @@ DELIVERY_MODIFIER_MAX = 1.20
 # damped. 0.5 chosen as the gentler of the two.
 EXTENSION_LOW_DISCOUNT = 0.5
 
+# REVISITED again same day: extension_ft's base weight, 1.0 -> 0.8. The
+# "extension and velocity compound rather than double-count" reasoning
+# above was a physical-mechanism argument (effective velocity / hitter
+# reaction time), not an empirical one -- tested it against real outcome
+# data (the same qualified population's whiff%, K%, hard-hit%, wOBA, and
+# run-value-per-100 columns, which the project deliberately keeps OUT of
+# the uScore+ formula itself; used here only as an outside diagnostic to
+# weigh this specific judgment call, same as every other per-component
+# weighting decision in this pass stayed inside the formula's own
+# consistency). A multivariate regression of each outcome on velocity AND
+# all four delivery components' |z| terms together found extension_ft
+# carries NO independent relationship with real results once velocity is
+# accounted for (p=0.76-0.89 across wOBA/run-value/K%) -- its apparent
+# effect in a raw correlation was almost entirely velocity's own effect
+# riding along (they correlate at r=0.74-0.80, see above). horizontal_
+# release_ft, by contrast, was the most consistently significant of the
+# four (p=0.02-0.04) and was deliberately left unchanged after this same
+# diagnostic -- see horizontal_release_ft's own entry above.
+# This doesn't reverse the earlier redundancy finding (extension and
+# velocity are still two distinct physical traits, not one double-counted
+# measurement) -- it's a separate, softer signal that extension's credit
+# may have been pitched too high relative to what the data shows it
+# actually predicts. Chose a modest discount rather than a bigger one:
+# swept 0.9 down to 0.6 against the real qualified population (n=715);
+# 0.9 barely moved anything (2/715 movers), 0.6/0.7 started approaching
+# the scale of changes already called "aggressive" elsewhere in this
+# pass. 0.8 (83/715 movers, max loss -0.04, max gain +0.04) was chosen as
+# a real but modest first step -- nobody already pinned at the
+# DELIVERY_MODIFIER_MAX cap (Misiorowski, Glasnow, Romano) moves at this
+# level; the pitchers who do move are specifically the ones whose credit
+# today rides almost entirely on extension and nothing else distinctive
+# (Smith, Whitlock, Rodriguez, Heuer, Taylor, Watson, Estrada, Gilbert).
 DELIVERY_COMPONENT_WEIGHT = {
-    "extension_ft": 1.0,
+    "extension_ft": 0.8,
     "arm_angle_deg": 0.3,
     "release_height_ft": 0.7,
     "horizontal_release_ft": 1.0,
