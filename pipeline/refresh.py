@@ -258,9 +258,44 @@ ACTIVE_SPIN_SHAPE = {
 # weight in this file: re-check once the next real population shift (a
 # new season's data, or a future joint active-spin/horizontal interaction
 # term if that's ever built) gives more to test against.
+#
+# SI 0.08 -> 0.25 (2026-10 model review, active-spin pass, second pitch
+# type). Unlike FF, SI's signed_neg shape (lower active spin rewarded)
+# already has a grounded rationale on its own terms -- seam-shifted-wake
+# sinkers are a real, recognized archetype, not a hypothesis that needed
+# testing the way FF's did -- so this pass was a magnitude-only check.
+# Double-counting already clean from the all-pitch-type audit (r=0.08 vs
+# credited IVB, r=0.13 vs horizontal, r=-0.16 vs velo). Named check: the
+# highest active-spin sinkers (the ones signed_neg discounts) are Josh
+# Hader and Félix Bautista -- both already elite overall (125, 156 in
+# 2025) and barely move at weight 0.25 (122, 151), so the discount isn't
+# doing any real damage to legitimately great arms. Same weight (0.25)
+# and same real-vs-inert leverage curve as FF (mean|delta| 0.99 at 0.25,
+# climbing to 4.36 at 1.0) chosen for consistency once the magnitude
+# case held up the same way.
+#
+# Side note for later, not acted on in this pass: Collin Snider and Chase
+# Lee turned up as the two lowest-active-spin names on BOTH FF and SI,
+# suggesting an overall low-active-spin delivery trait for these two
+# specific pitchers rather than two coincidental pitch-level archetypes.
+# Worth a look once all pitch types are through this pass, not a reason
+# to change SI's shape or weight on its own.
+#
+# CH 0.10 -> 0.25 (2026-10 model review, active-spin pass, third pitch
+# type). Unlike FF/SI, CH's flat abs() shape was found to double-count
+# with the already-credited horizontal term on its low side specifically
+# -- see CH_AS_LOW_DISCOUNT's definition above for the full rationale, the
+# asymmetric low-side discount this weight pairs with, and the named-
+# example sweep (0.10/0.25/0.40 x discount 0.3/0.5) that landed on this
+# combination. 0.25 chosen for consistency with FF/SI's own weight once
+# the shape was fixed, even though the practical effect at this weight is
+# much smaller for CH than for FF/SI (CH's Ceiling already carries more
+# independent signal elsewhere for active spin's marginal share to compete
+# against) -- max display-score movement 2-4 points at this weight, no
+# named pitcher moving double digits.
 ACTIVE_SPIN_WEIGHT = {
-    "FF": 0.25, "SI": 0.08, "FC": 0.05,
-    "CH": 0.10, "FS": 0.10, "FO": 0.0,
+    "FF": 0.25, "SI": 0.25, "FC": 0.05,
+    "CH": 0.25, "FS": 0.10, "FO": 0.0,
     "CU": 0.10, "KC": 0.0, "CS": 0.0,
     "SL": 0.10, "ST": 0.10, "SV": 0.10,
 }
@@ -1225,6 +1260,64 @@ CH_IVB_RAW_WEIGHT = 0.3
 # magnitude it's meant to.
 CH_IVB_RAW_ABOVE_AVG_DISCOUNT = 0.5
 
+# CH-specific asymmetric treatment of active-spin EFFICIENCY (distinct from
+# CH_SPIN_WEIGHT/raw spin_rpm above) -- 2026-10 model review, active-spin
+# pass, done after FF/SI's active-spin passes (see ACTIVE_SPIN_WEIGHT's
+# definition below for those). ACTIVE_SPIN_SHAPE["CH"] = "abs" rewards
+# distance from league-average active spin in EITHER direction, which
+# turned out to double-count: the all-pitch-type double-counting audit
+# found active spin correlates with the already-credited horizontal term
+# at r=0.50-0.55 specifically on the LOW side (low active spin -> more
+# seam-shifted-wake-style fade, the same movement horizontal_in already
+# rewards directly), while the HIGH side has no comparable grounded
+# archetype or correlation backing it. Flat abs() credits both sides
+# equally, so the low side was getting paid twice for the same physical
+# signal (once via active spin, once via horizontal fade) while the high
+# side got that same credit without the redundancy problem.
+# Same asymmetric-weight pattern as CH_IVB_RAW_ABOVE_AVG_DISCOUNT just
+# above and IVB_WEIGHT_BELOW_AVG_OVERRIDE/ABOVE_AVG_OVERRIDE (FF/SI) --
+# full ACTIVE_SPIN_WEIGHT on rows where active spin is ABOVE the CH
+# population average (as_z_raw >= 0, no redundancy concern), discounted to
+# ACTIVE_SPIN_WEIGHT * CH_AS_LOW_DISCOUNT on rows BELOW it (as_z_raw < 0,
+# the side that overlaps with horizontal).
+#
+# Swept 0.10/0.25/0.40 weight x 0.3/0.5 discount against the real 2025 CH
+# population. Effect sizes here are much smaller than FF/SI's equivalent
+# sweep at the same weights (max|delta| 2-4 display-score points even at
+# weight=0.40, vs. FF/SI's 9-11 at weight=0.25) -- expected, since CH's
+# Ceiling already carries more independent signal elsewhere (velocity/IVB
+# gap-blends, CH_SPIN_WEIGHT's raw-spin term) for active spin's marginal
+# share to compete against. Named check: Ragans/Luzardo/Heaney (real high-
+# active-spin, real extra fade) gain modestly as weight climbs, consistent
+# with the design's intent; Feltner/Carrasco/Schultz (low-active-spin,
+# low-fade, the redundant archetype this fix targets) lose a little at the
+# more aggressive 0.3 discount but land close to baseline at 0.5; Webb and
+# Morejon barely move either way, consistent with their quality coming
+# from elsewhere in the formula (raw spin for Morejon, overall stuff for
+# Webb) rather than active spin.
+#
+# Known imperfection, flagged rather than fixed in this pass: the low/high
+# split is based on active spin's OWN z-score sign, not on whether a given
+# pitcher's horizontal shape actually confirms the "redundant with fade"
+# story -- so a real two-way outlier can fall on the wrong side. Devin
+# Williams is the concrete example: his active spin (87.1%) sits just
+# below the CH population mean (88.64%), so he gets bucketed into the
+# discounted side despite having the single biggest fade in this sample
+# (19.2in horizontal) and plenty of raw spin already credited elsewhere --
+# i.e. his case doesn't match the low-active-spin/low-fade redundancy this
+# discount is built around. In practice this doesn't move his score
+# (166 baseline -> 162-167 across every combo tested) because the rest of
+# his profile dominates his Ceiling, so it's noted as a design limitation
+# to revisit if a future joint active-spin/horizontal interaction term is
+# ever built (same open flag as CH_IVB_RAW_ABOVE_AVG_DISCOUNT's own
+# asymmetric split above), not something with real stakes today.
+#
+# weight=0.25 chosen for cross-pitch-type consistency with FF/SI's own
+# active-spin weight; discount=0.5 chosen over 0.3 as the gentler, less
+# punitive option once the magnitude sweep showed no meaningful practical
+# difference between them (max movement 2-4 points either way).
+CH_AS_LOW_DISCOUNT = 0.5
+
 # Per-pitch-type override for how much horizontal break counts toward the
 # Ceiling formula, in place of the global HORIZ_WEIGHT. Sliders, sweepers,
 # and slurves get real, distinct value from horizontal movement
@@ -2090,6 +2183,18 @@ def compute_pitch_quotients(pitch_metrics: pd.DataFrame, active_spin_fallback: p
             # weighted asymmetrically below rather than credited equally.
             spin_z = spin_z.abs()
         as_weight = ACTIVE_SPIN_WEIGHT.get(pt, 0.0)
+        if pt == "CH":
+            # Asymmetric low-side discount -- see CH_AS_LOW_DISCOUNT's
+            # definition above for the full rationale (double-counting
+            # with the already-credited horizontal term on the low-
+            # active-spin side only). "Low" here means below the CH
+            # population's own active-spin average (as_z_raw < 0), on the
+            # same pre-abs z-score active_spin_quotient() computes
+            # internally -- recomputed here since that function only
+            # returns the post-shape (already abs'd) value.
+            as_z_raw = zscore(group["active_spin_pct"].fillna(group["active_spin_pct"].mean()))
+            as_weight = pd.Series(as_weight, index=group.index)
+            as_weight[as_z_raw < 0] = ACTIVE_SPIN_WEIGHT.get(pt, 0.0) * CH_AS_LOW_DISCOUNT
         horiz_weight = HORIZ_WEIGHT_OVERRIDE.get(pt, HORIZ_WEIGHT)
         if pt == "CH":
             spin_weight = CH_SPIN_WEIGHT
