@@ -207,8 +207,59 @@ ACTIVE_SPIN_SHAPE = {
 
 # Weight each pitch type's active-spin quotient carries in that pitch's
 # Ceiling formula (0 where Savant has no active-spin reading for the type).
+#
+# FF 0.08 -> 0.25 (2026-10 model review, active-spin pass, first pitch type
+# done in this dimension after the per-pitch-type movement/raw-spin passes
+# above). This is the active-spin EFFICIENCY dimension (distinct from
+# CH_SPIN_WEIGHT/FS_SPIN_WEIGHT, which are raw spin_rpm) -- it had never
+# been swept or spot-checked against real outcomes; 0.08 was original
+# scaffolding.
+#
+# First checked for double-counting against every already-credited FF
+# dimension on the actual shape-transformed, weighted terms (not raw
+# metrics): r=0.00 vs the credited (abs, below-avg-discounted) IVB term,
+# r=-0.30 vs raw spin_rpm -- both clean, active spin adds independent
+# signal.
+#
+# Then specifically tested the hypothesis that low active spin mostly
+# reflects a deliberate cut-shaped four-seam archetype (which would argue
+# for an abs-with-discount shape, mirroring FF IVB's own below-average
+# discount) rather than signed. Population-wide, active_spin_pct does
+# correlate with signed horizontal_in at r=0.504 (lowest quintile averages
+# 5.0in of run vs. 9.8in for the highest) -- a real tendency, not nothing.
+# But named-example testing showed this is a loose relationship, not a
+# tight one: real cut-shaped four-seamers (Kershaw, Fairbanks, Bradish,
+# Rashi -- all <=0in horizontal_in in 2025) sit at 78-89% active spin, well
+# above average, and only ~7% of the lowest active-spin quintile actually
+# has negative/true-cut horizontal_in. An abs+discount variant was built
+# and swept (0.25/0.3 through 0.4/0.5) against both groups: in every
+# combo, the single biggest beneficiary was Collin Snider (+17 to +22),
+# the single lowest active-spin FF in the dataset but with completely
+# unremarkable (0.84in) horizontal shape -- i.e. abs rewards raw numeric
+# extremity, not the cutter archetype specifically, and does so MORE than
+# it rewards genuine cutters like Saalfrank/Kent/Gray (+3 to +8 in the
+# same sweep). Separately, the true cutters turned out not to need
+# protecting: their overall scores were already fine under signed
+# (Fairbanks 122, Bradish 97, Kershaw 84, Rashi 83 in 2025) because
+# HORIZ_SHAPE's existing abs treatment already rewards their cut movement
+# directly -- the archetype is covered elsewhere in the formula, not
+# missing. Kept signed on that basis.
+#
+# Weight magnitude swept 0.0-1.0 on its own real leverage (mean|delta|
+# climbing from ~0 at 0.08 to 3.96 at 1.0, named extremes in both
+# directions moving as expected throughout). 0.25 chosen after comparing
+# head-to-head against 0.20 (gentler: mean|delta| 0.68 vs 0.98, only one
+# pitcher -- Snider -- crossing +/-5 at all) and 0.08 (next to inert): 0.25
+# gives the dimension real, visible teeth (Heaney, Gomber, Falter moving
+# +3 to +4; Gray, Steele, Horton, Keller moving -4 to -5) without any
+# named pitcher moving double digits.
+#
+# Flagged for revisit, not treated as final, same caveat as every other
+# weight in this file: re-check once the next real population shift (a
+# new season's data, or a future joint active-spin/horizontal interaction
+# term if that's ever built) gives more to test against.
 ACTIVE_SPIN_WEIGHT = {
-    "FF": 0.08, "SI": 0.08, "FC": 0.05,
+    "FF": 0.25, "SI": 0.08, "FC": 0.05,
     "CH": 0.10, "FS": 0.10, "FO": 0.0,
     "CU": 0.10, "KC": 0.0, "CS": 0.0,
     "SL": 0.10, "ST": 0.10, "SV": 0.10,
