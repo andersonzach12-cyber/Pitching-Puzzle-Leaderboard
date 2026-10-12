@@ -2267,6 +2267,42 @@ DELIVERY_MODIFIER_MAX = 1.20
 # credited per-pitch horizontal movement term (not just the other delivery
 # components): r=+0.015-0.02, clean. No redundancy, stays at full weight.
 #
+# REVISITED again same day, 0.3/0.7 -> 0.5/0.5 (arm_angle/release_height).
+# The 0.3/0.7 split above was a judgment call (release_height being the
+# "richer, more inclusive measurement"), not an outcome-backed conclusion --
+# tested it the same way as extension's weight, above. A multivariate
+# regression of each outcome (wOBA, run-value/100, K%) on velocity and all
+# four delivery components' |z| terms together found the OPPOSITE of what
+# 0.3/0.7 assumed: arm_angle_deg is consistently borderline (p=0.064-0.083
+# across all three outcomes, same direction every time), while
+# release_height_ft shows no independent relationship with any of them
+# (p=0.558-0.862). Neither is clean-significant, and the two are collinear
+# (r^2=0.668, see above) so this isn't a precise causal attribution -- but
+# there's no outcome-based case left for weighting release_height ABOVE
+# arm_angle, which is what 0.3/0.7 did.
+# Also checked whether release_height's real independent variance might be
+# standing in for approach angle (a pitch-flattening/steepening factor not
+# directly available from Statcast, but reconstructable from release point +
+# extension + velocity + induced vertical break). It is the dominant
+# geometric driver of approach angle (release_height alone explains 66.3%
+# of reconstructed VAA's variance; arm_angle adds almost nothing on top of
+# that, 66.6% jointly) -- confirming release_height's weight is earning its
+# keep for a real physical reason. But the leftover ~33% of VAA independent
+# of both components showed only thin, inconsistent outcome signal (K%
+# p=0.013, run-value p=0.084, wOBA p=0.56) -- not strong or clean enough to
+# justify building approach angle in as its own component, and likely
+# already partly covered by the per-pitch movement-uniqueness terms this
+# project credits separately. Not pursued further; noted here since it's
+# what originally motivated weighting release_height above arm_angle.
+# Swept 0.4/0.6 through 0.6/0.4 against the real qualified population
+# (n=715, vs. the 0.3/0.7 baseline): 0.4/0.6 barely moved anything (13/715
+# >=0.02); 0.5/0.5 moved 142/715 (max loss -0.046, max gain +0.058); 0.6/0.4
+# moved 234/715 (max loss -0.069, max gain +0.086). 0.5/0.5 chosen --
+# matches the original symmetric redundancy math (the two explain the exact
+# same 66.8% of each other's variance) without over-trusting a p=0.06-0.08
+# coefficient split between two collinear predictors enough to flip past
+# parity in arm_angle's favor.
+#
 # extension_ft -- also reviewed. Checked against velocity (its most obvious
 # physical proxy) and found a large correlation: r=+0.74 raw, +0.80 on
 # credited |z| terms (qualified pitchers only, n=716) -- bigger than the
@@ -2344,8 +2380,8 @@ EXTENSION_LOW_DISCOUNT = 0.5
 # (Smith, Whitlock, Rodriguez, Heuer, Taylor, Watson, Estrada, Gilbert).
 DELIVERY_COMPONENT_WEIGHT = {
     "extension_ft": 0.8,
-    "arm_angle_deg": 0.3,
-    "release_height_ft": 0.7,
+    "arm_angle_deg": 0.5,
+    "release_height_ft": 0.5,
     "horizontal_release_ft": 1.0,
 }
 
@@ -2408,16 +2444,44 @@ def build_delivery_quotients(
 
     if handedness is not None and not handedness.empty:
         delivery = delivery.merge(handedness, on="player_id", how="left")
-        is_rhp = delivery["p_throws"].astype(str).str.upper().eq("R")
+        p_throws_upper = delivery["p_throws"].astype(str).str.upper()
+        is_rhp = p_throws_upper.eq("R")
+        is_lhp = p_throws_upper.eq("L")
         # Same flip convention as horizontal_in: negate for right-handers so
         # the sign consistently means the same side of the mound for
-        # everyone. A pitcher with no known hand (not on this season's
-        # per-pitch fetch at all) is left unflipped -- same as a pitcher
-        # missing from the arm-angle leaderboard getting a neutral reading
-        # rather than a guess.
-        delivery["horizontal_release_ft"] = delivery["horizontal_release_ft"].where(
-            ~is_rhp, -delivery["horizontal_release_ft"]
+        # everyone. FIXED 2026-10-12: a pitcher whose hand didn't resolve to
+        # 'R' or 'L' (missing from this season's per-pitch fetch, a join
+        # miss, an unexpected p_throws value) used to be "left unflipped" on
+        # the theory that was a neutral reading, same as a pitcher missing
+        # entirely from the arm-angle leaderboard. It isn't neutral: leaving
+        # the RAW value in place drops that pitcher at the old (pre-flip)
+        # population mean, e.g. ~-1.86ft for the un-normalized right-handed
+        # cluster, while everyone else has just been re-centered by the
+        # flip -- so an unresolved pitcher reads as a huge glove-side
+        # outlier instead of average. Confirmed against real handedness data:
+        # this was filling the entire top of the |z| leaderboard with
+        # unresolved-hand pitchers and crowding out every genuine extreme,
+        # lefty and righty alike. A true neutral reading is "unknown delivery
+        # metric", which this function already has a convention for (NaN ->
+        # z-score fillna(0.0) below) -- so route unresolved hand there
+        # instead of guessing a sign.
+        delivery["horizontal_release_ft"] = np.where(
+            is_rhp, -delivery["horizontal_release_ft"],
+            np.where(is_lhp, delivery["horizontal_release_ft"], np.nan),
         )
+        # Visibility into the one gap this fallback can't close: `handedness`
+        # is keyed off the per-pitch events pull, `delivery` off the
+        # separate arm-angle leaderboard export -- a pitcher who clears one
+        # source's threshold/cadence but not the other's (in either
+        # direction) resolves to neutral rather than a guessed sign, same as
+        # any other missing delivery metric. Expected to be a small, self-
+        # healing slice each run, not a growing one -- this print is here so
+        # that assumption is checked against real numbers on every refresh
+        # instead of taken on faith.
+        n_unresolved = (~(is_rhp | is_lhp)).sum()
+        print(f"build_delivery_quotients: {n_unresolved}/{len(delivery)} pitchers on the "
+              f"arm-angle leaderboard had no resolvable p_throws from this run's pitch "
+              f"events (neutral horizontal_release_ft reading applied).")
 
     for col in ["extension_ft", "arm_angle_deg", "release_height_ft", "horizontal_release_ft"]:
         # fillna(0) on the z-score itself (not the raw metric) treats a
