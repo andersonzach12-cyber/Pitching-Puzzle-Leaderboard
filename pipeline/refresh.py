@@ -2195,6 +2195,85 @@ DELIVERY_MODIFIER_WEIGHT = 0.15  # how much a league-relative "how unusual is th
 DELIVERY_MODIFIER_MIN = 0.85
 DELIVERY_MODIFIER_MAX = 1.20
 
+# Per-component weights inside delivery_quotient/adj_delivery_quotient.
+# Reviewed 2026-10-12 (same double-counting-audit methodology as the
+# active-spin review): pooled ~11,400 pitcher-seasons' worth of raw delivery
+# components, reconstructed from the uploaded Savant pitch-arsenal exports
+# (historical_ingest.build_delivery_from_arsenal), since the live model had
+# never actually checked whether its own four delivery components are
+# independent. They aren't, by a wide margin on one pair -- arm_angle_deg
+# and release_height_ft correlate at r=+0.73 on the credited |z| term (vs.
+# 0.3-0.5 for the biggest double-counting issues found in the active-spin
+# pass). This isn't a statistical coincidence, it's mechanical: a lower arm
+# slot IS a lower release point by definition of where the ball leaves the
+# hand. Named check confirms it -- Tyler Rogers (submarine) sits at the
+# extreme on both: arm_angle -60.6 deg, release_height 1.26ft, same pitcher,
+# same trait, credited twice today.
+# Extension and horizontal_release_ft stay independent of everything
+# (r<=0.14 against every other component) and keep full weight.
+# Chose a 0.5 discount on both arm_angle and release_height (rather than
+# dropping release_height to 0) because the overlap is real but not total --
+# r=0.73 leaves real independent variance in release_height beyond what arm
+# angle alone explains, concentrated in the moderate (non-outlier) part of
+# the population since the extreme cases (Rogers, Thompson, Hill) are
+# already pinned at DELIVERY_MODIFIER_MAX either way and don't move.
+# Mirrors the same "discount the overlap, don't delete the term" precedent
+# as CH_AS_LOW_DISCOUNT and CH_IVB_RAW_ABOVE_AVG_DISCOUNT.
+#
+# horizontal_release_ft -- also reviewed, checked against the already-
+# credited per-pitch horizontal movement term (not just the other delivery
+# components): r=+0.015-0.02, clean. No redundancy, stays at full weight.
+#
+# extension_ft -- also reviewed. Checked against velocity (its most obvious
+# physical proxy) and found a large correlation: r=+0.74 raw, +0.80 on
+# credited |z| terms (qualified pitchers only, n=716) -- bigger than the
+# arm_angle/release_height overlap above. Named examples (Glasnow, Romano,
+# Gilbert, Misiorowski, Gervase) sit at the extreme-extension tail and are
+# also elite velocity arms, confirming the correlation is real, not noise.
+# Deliberately NOT discounted, unlike arm_angle/release_height -- those two
+# are two measurements of one physical fact (arm slot mechanically
+# determines release height, so crediting both pays twice for a single
+# trait). Extension and velocity are two separate traits that happen to
+# correlate in the population (bigger/longer-levered arms tend to generate
+# both), but each contributes independent value: extension changes
+# effective velocity / hitter reaction time on top of whatever velocity
+# already is, so an elite-velocity arm with elite extension (Misiorowski)
+# is a genuinely bigger outlier than velocity alone would credit, not a
+# double-counted one. Correlation alone isn't sufficient evidence of
+# redundancy -- the mechanism has to be "same trait measured twice," which
+# this isn't. Kept at full weight per this reasoning (2026-10-12) -- on
+# the ABOVE-average side. Revisited again same day on a second, separate
+# question: is `abs` even the right SHAPE for extension?
+#
+# Below-average extension releases the ball farther from the plate, which
+# gives the hitter MORE reaction time -- a real, one-directional
+# disadvantage, not a second valid archetype the way an unusual arm slot
+# or release side can be. The qualified-pitcher low-extension tail backs
+# this up: it's mostly journeyman middle relievers (Herget, Lord, Romero,
+# Marquez, Castano, Fisher, Wrobleski), not a recognizable "deceptive
+# short-arm" archetype, while the high tail is loaded with legitimately
+# elite stuff (Glasnow, Gilbert, Misiorowski, Romano, Devin Williams). So
+# `abs` was handing that tail full credit it doesn't have the same case for.
+#
+# Not treated as pure `signed` (zero credit below average) either --
+# agreed a short-extension pitcher should still get SOME credit, just not
+# full. EXTENSION_LOW_DISCOUNT applies full weight on the above-average
+# side and a discounted weight below average, same asymmetric-by-sign
+# structure as CH_AS_LOW_DISCOUNT (shape stays `abs`, the WEIGHT is what's
+# conditional on z-sign). Swept 0.3 vs 0.5 against the real qualified
+# population (n=715): 0.3 moved 558/715 pitchers >=0.02 in delivery_modifier
+# (max loss -0.21, max gain +0.07); 0.5 moved 517/715 (max loss -0.16, max
+# gain +0.06) -- same direction and same pitchers at both settings, just
+# damped. 0.5 chosen as the gentler of the two.
+EXTENSION_LOW_DISCOUNT = 0.5
+
+DELIVERY_COMPONENT_WEIGHT = {
+    "extension_ft": 1.0,
+    "arm_angle_deg": 0.5,
+    "release_height_ft": 0.5,
+    "horizontal_release_ft": 1.0,
+}
+
 
 def build_delivery_quotients(pitch_metrics_player_ids: pd.Series, delivery: pd.DataFrame) -> pd.DataFrame:
     """One row per pitcher with delivery z-scores, delivery_quotient/
@@ -2230,13 +2309,28 @@ def build_delivery_quotients(pitch_metrics_player_ids: pd.Series, delivery: pd.D
         # row's delivery_quotient/adj_delivery_quotient sum with NaN.
         delivery[f"{col}_z"] = zscore(delivery[col]).fillna(0.0)
 
-    delivery["delivery_quotient"] = sum(
-        delivery[f"{c}_z"].abs()
-        for c in ["extension_ft", "arm_angle_deg", "release_height_ft", "horizontal_release_ft"]
+    # extension_ft's weight is asymmetric by the sign of its own z-score --
+    # full DELIVERY_COMPONENT_WEIGHT on the above-average (longer-extension)
+    # side, discounted by EXTENSION_LOW_DISCOUNT on the below-average side.
+    # See EXTENSION_LOW_DISCOUNT's definition above for why.
+    extension_weight = pd.Series(DELIVERY_COMPONENT_WEIGHT["extension_ft"], index=delivery.index)
+    extension_weight[delivery["extension_ft_z"] < 0] *= EXTENSION_LOW_DISCOUNT
+
+    other_components = ["arm_angle_deg", "release_height_ft", "horizontal_release_ft"]
+
+    delivery["delivery_quotient"] = (
+        extension_weight * delivery["extension_ft_z"].abs()
+        + sum(
+            DELIVERY_COMPONENT_WEIGHT[c] * delivery[f"{c}_z"].abs()
+            for c in other_components
+        )
     )
-    delivery["adj_delivery_quotient"] = sum(
-        delivery[f"{c}_z"].abs().pow(0.5)
-        for c in ["extension_ft", "arm_angle_deg", "release_height_ft", "horizontal_release_ft"]
+    delivery["adj_delivery_quotient"] = (
+        extension_weight * delivery["extension_ft_z"].abs().pow(0.5)
+        + sum(
+            DELIVERY_COMPONENT_WEIGHT[c] * delivery[f"{c}_z"].abs().pow(0.5)
+            for c in other_components
+        )
     )
 
     # A second, "meta" z-score: not how unusual the delivery is in absolute
