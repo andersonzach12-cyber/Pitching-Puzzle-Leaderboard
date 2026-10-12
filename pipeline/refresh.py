@@ -198,8 +198,43 @@ ST_TO_SL_RECLASSIFY = {
 #   "abs"        -> distance from the league mean either direction is what's
 #                   rewarded (offspeed/breaking pitches)
 #   None         -> Savant doesn't publish active-spin for this pitch type
+#
+# FC flipped "signed" -> "signed_neg" (2026-10 model review, active-spin
+# pass, fifth pitch type, done right after FS). Unlike every other pitch
+# type touched in this pass, this wasn't a double-counting or magnitude
+# question -- the original "signed" shape (inherited unchanged from the
+# Excel model's scaffolding, never re-tested the way FF's shape was) had
+# the direction backwards. Raw active_spin_pct correlates with raw ivb_in
+# at r=+0.83 in the 2025 FC population -- far beyond any other pitch
+# type's active-spin correlation -- because gyro-spin fraction mechanically
+# drives IVB for cutters. FC's OWN IVB design (set earlier in this same
+# review round, see IVB_WEIGHT_ABOVE_AVG_OVERRIDE) already treats
+# below-average/depth IVB as the sought, full-credit cutter archetype and
+# above-average/carry IVB as the less-characteristic, discounted side. The
+# old "signed" shape rewarded HIGH active spin -- i.e. the carry side IVB
+# already discounts -- and penalized LOW active spin -- i.e. the depth side
+# IVB already favors -- directly contradicting the rest of the formula's
+# own established intent for this pitch type.
+# Named check confirmed this using the file's own existing reference
+# examples: Rasmussen (the IVB docstring's named depth-cutter archetype)
+# sits at 30.0% active spin with IVB 3.84in; Jansen (the
+# IVB_WEIGHT_ABOVE_AVG_OVERRIDE writeup's named carry-cutter/high-usage
+# example) sits at 81.8% with IVB 18.72in -- exactly backwards under the
+# old shape.
+# "abs" (mirroring CH/FS's shape, with a high-side discount) was
+# considered and rejected: unlike CH/FS, there's no second, independently
+# legitimate archetype on FC's high-active-spin side to justify symmetric
+# credit -- the real high-active-spin tail (Povich, Myers, Dunning, Wells,
+# Pivetta, Weaver) isn't elite the way Bautista/Imanaga are for FS; Jansen
+# is the only elite case in that tail, and this file's own existing
+# writeup on him already attributes his quality to his extreme usage rate,
+# not his cutter's shape. High active spin for a cutter is the less-
+# characteristic, already-discounted direction, not a second valid
+# weapon -- so signed_neg (full credit for depth, active penalty for
+# drifting toward carry) matches the formula's established intent instead
+# of treating both ends as symmetric unknowns.
 ACTIVE_SPIN_SHAPE = {
-    "FF": "signed", "SI": "signed_neg", "FC": "signed",
+    "FF": "signed", "SI": "signed_neg", "FC": "signed_neg",
     "CH": "abs", "FS": "abs", "FO": None,
     "CU": "abs", "KC": None, "CS": None,
     "SL": "abs", "ST": "abs", "SV": "abs",
@@ -319,8 +354,41 @@ ACTIVE_SPIN_SHAPE = {
 # 0.25 chosen for consistency with FF/SI/CH's shared weight: mean|delta|
 # 0.58, max|delta| 6, only one pitcher (Cruz) crossing +/-5, nobody
 # crossing +/-10.
+#
+# FC 0.05 -> 0.10 (2026-10 model review, active-spin pass, fifth pitch
+# type, paired with the signed -> signed_neg shape flip above -- see that
+# flip's writeup in ACTIVE_SPIN_SHAPE for the full direction-bug
+# rationale). Deliberately NOT raised to 0.25 like FF/SI/CH/FS: the
+# credited-term audit (not just the raw r=0.83) found active spin
+# correlates with the already-credited IVB term at r=+0.32 -- real
+# redundancy, same order of magnitude as CH's r=0.50 double-counting
+# issue. Unlike CH's, this overlap is symmetric across the whole
+# distribution (r=0.67 within the depth side, r=0.68 within the carry
+# side, 2025 population) rather than concentrated on one side, so an
+# asymmetric low/high-side discount (CH's fix) doesn't fit this data --
+# the two metrics are just measuring close to the same underlying thing
+# (gyro-spin fraction) across the board for this pitch type. That argues
+# for staying conservative rather than defaulting to the other four pitch
+# types' 0.25.
+# Swept 0.05/0.10/0.25/0.40 against the real 2025 FC population (n=239)
+# post-flip:
+#   signed_neg 0.05: mean|delta|=0.65  max|delta|=6   n(>=5)=1   n(>=10)=0
+#   signed_neg 0.10: mean|delta|=0.98  max|delta|=10  n(>=5)=2   n(>=10)=1  <- CHOSEN
+#   signed_neg 0.25: mean|delta|=1.89  max|delta|=20  n(>=5)=20  n(>=10)=1
+#   signed_neg 0.40: mean|delta|=2.73  max|delta|=30  n(>=5)=43  n(>=10)=5
+# 0.10 chosen: real, visible correction (most movers +3 to +5 on the depth
+# side, -3 on the carry side) without opening up the broader population
+# churn 0.25+ introduces (20+ movers >=5 points). Jansen (Kenley) is the
+# one pitcher crossing +/-10 (164 -> 154) -- he's also the file's own
+# reference example for the carry archetype IVB already discounts, so
+# this is the expected, intended correction landing on its intended
+# target, not collateral damage. Flagged for revisit alongside
+# CH_AS_LOW_DISCOUNT and CH_IVB_RAW_ABOVE_AVG_DISCOUNT if a future joint
+# active-spin/IVB interaction term is ever built, since the real fix here
+# is architectural (two levers measuring one trait) rather than a
+# magnitude tweak.
 ACTIVE_SPIN_WEIGHT = {
-    "FF": 0.25, "SI": 0.25, "FC": 0.05,
+    "FF": 0.25, "SI": 0.25, "FC": 0.10,
     "CH": 0.25, "FS": 0.25, "FO": 0.0,
     "CU": 0.10, "KC": 0.0, "CS": 0.0,
     "SL": 0.10, "ST": 0.10, "SV": 0.10,
