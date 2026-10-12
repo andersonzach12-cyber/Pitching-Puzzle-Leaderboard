@@ -387,6 +387,128 @@ ACTIVE_SPIN_SHAPE = {
 # active-spin/IVB interaction term is ever built, since the real fix here
 # is architectural (two levers measuring one trait) rather than a
 # magnitude tweak.
+#
+# CU 0.10 -> 0.10, NO CHANGE (2026-10 model review, active-spin pass,
+# sixth pitch type, done right after FC). Reviewed and confirmed adequate
+# rather than left untouched -- this is the cleanest/strongest overlap
+# found in the entire pass, stronger than CH's or FC's. Raw
+# active_spin_pct vs. raw ivb_in: r=-0.77 (2025 population); credited-term
+# correlation (active spin vs. the already-weighted, flat-abs IVB term,
+# which has never needed a below/above-average discount the way FF/SI/
+# FC/FS's did): r=+0.57. Unlike CH/FC, the overlap isn't concentrated on
+# one side or bounded by an existing asymmetric discount -- it's close to
+# monotonic across the whole distribution (mean IVB -5.25in/-9.07/-10.22/
+# -12.43/-13.82in across active-spin quintiles 0-4, 2025 CU population).
+# Makes physical sense: curveball depth comes almost entirely from
+# spin-driven topspin, so active-spin efficiency and IVB are close to the
+# same underlying physical quantity for this pitch type specifically, not
+# two independent signals the way they are for CH/FS.
+# Practical consequence: the weight barely matters. Swept 0.0-0.40 against
+# the real 2025 population (n=240): max|delta| never exceeds 3 points at
+# ANY weight in that range, Spearman vs. the current ranking stays >=0.99
+# throughout. Named check confirms it's inert everywhere, including the
+# two archetypes this pitch type's own velocity shape was built to
+# protect (Glasnow, firm/power curve; Valdez, slow/loopy curve) -- both
+# move at most 1 point across the full 0-0.40 range.
+# Conclusion: unlike FF/SI/CH/FS, there's no latent independent signal
+# here to unlock by raising the weight -- IVB has already absorbed almost
+# all of it, so raising to 0.25 would just amplify a near-duplicate of
+# IVB rather than add real teeth. Left at 0.10, shape left at abs.
+#
+# SL 0.10 -> 0.10, NO CHANGE (2026-10 model review, active-spin pass,
+# seventh pitch type, done right after CU). Audit found a real, roughly
+# SYMMETRIC overlap with the already-credited horizontal term (credited-
+# term r=+0.42 on the low-active-spin side, +0.53 on the high side) --
+# comparable to or slightly stronger than FC's r=0.32, same structural
+# story as FC (not CH's one-sided case): the raw relationship is close to
+# monotonic (mean |horizontal_in| 2.37in/3.27/4.09/5.19/5.69in across
+# active-spin quintiles 0-4, 2025 population), and since horizontal's
+# shape is already abs (rewards distance from the mean in EITHER
+# direction), both active-spin tails end up tracking one of horizontal's
+# own tails -- low active spin -> genuinely less sweep (tight, gyro-
+# dominant sliders), high active spin -> genuinely more.
+# Unlike FC, though, the practical leverage here is minimal even before
+# accounting for the overlap: SL's Ceiling already carries a lot of other
+# signal (velo abs+discount, IVB abs at an already-reduced 0.60 override,
+# horizontal abs at 0.49) for active spin's marginal share to compete
+# against. Swept 0.0-0.40 against the real 2025 population (n=390):
+# max|delta| stays <=4 all the way through weight=0.25, only reaching 7 at
+# 0.40 (3 pitchers crossing +/-5, nobody crossing +/-10). Sale and Corbin
+# (the slow-slider archetypes SL's own velocity shape was built to
+# protect) barely move at any setting tested (160->162, 106->107 at
+# 0.25). Specifically checked 0.10 -> 0.15: mean|delta|=0.28, max|delta|=2
+# (one pitcher, Falter), 108/390 pitchers move at all and all but one of
+# those by exactly +/-1 -- a rounding-level nudge, not a real change in
+# what the dimension rewards.
+# Left at 0.10: given the real, comparable-to-FC overlap with horizontal,
+# there's no case for defaulting to 0.25 parity with FF/SI/CH/FS, and
+# given how inert the dimension is at any setting tested, there's no
+# practical case for moving off 0.10 either. Same conclusion as CU
+# (reviewed, confirmed adequate, left as-is), reached for a different
+# reason (real but modest redundancy + low leverage, vs. CU's near-total
+# redundancy with IVB).
+#
+# ST 0.10 -> 0.10, NO CHANGE (2026-10 model review, active-spin pass,
+# eighth pitch type, done right after SL). The aggregate credited-term
+# correlation with horizontal looked clean at first (r=-0.00) -- but that
+# number was hiding a real, CH-mirroring split-sided effect that cancels
+# out in the average rather than a genuinely clean result: splitting by
+# side, low-active-spin rows correlate with the credited (signed_neg)
+# horizontal term at r=-0.57, high-active-spin rows at r=+0.41. These are
+# opposite stories, same as CH's but on the opposite side: on the HIGH
+# side, extreme active spin genuinely tracks extreme sweep already
+# credited via horizontal (Bassitt: 87.1% active spin, -19.20in horizontal
+# -- both extremes at once) -- real double-counting, CH's low-side
+# mechanism. On the LOW side, extreme active spin tracks LESS sweep, not
+# more (quintile means run -11.2in/-13.0/-13.2/-15.0/-16.1in of break
+# across active-spin quintiles 0-4, 2025 population) -- independent
+# signal, FS's mechanism. In principle this argues for the mirror image
+# of CH's fix: discount the HIGH side, keep full credit on the LOW side.
+# In practice, it doesn't matter: ST's Ceiling already carries unusually
+# large boosted weights on both horizontal (1.05 override) and IVB (1.46
+# override) -- both set in ST's own earlier review pass -- leaving almost
+# no room for active spin's marginal share to register regardless of
+# shape. Swept weight x high-side-discount combos (0.10-0.40 x 0.3/0.5)
+# against the real 2025 population (n=232): max|delta| never exceeds 4
+# points at ANY combo tested, 0 pitchers crossing +/-5 anywhere. Named
+# check on both the redundant-high (Bassitt, Hudson, Criswell, Kelly, Lee)
+# and independent-low (Meyer -- the power-sweeper archetype ST's velocity
+# shape protects, Manaea, Yarbrough, Palmquist, Soto -- the deceptive-
+# lefty group from that same pass) sides confirms it: all move 0-1 points
+# across every combo.
+# Conclusion: the asymmetric structure is real and worth documenting
+# (relevant context if horizontal/IVB's own weights are ever revisited),
+# but there's no practical case for changing anything here -- the rest of
+# the formula has already absorbed virtually all of this signal, same
+# situation as CU (near-total absorption via IVB alone) just via
+# horizontal+IVB together here. Left at flat 0.10, abs shape, no
+# asymmetric discount added.
+#
+# SV 0.10 -> 0.10, NO CHANGE (2026-10 model review, active-spin pass,
+# ninth and final pitch type, done right after ST). Same population this
+# file already flagged as too thin to trust for SV's velocity/IVB/
+# horizontal decisions (see the VELO_SHAPE writeup above) -- 15
+# qualifying pitchers in 2025, 62 total pooled across all six seasons
+# SV has existed as a tracked pitch type (2020-2025).
+# The audit result depends entirely on whether a single season is
+# trusted: 2025-only raw correlations look large (velo r=-0.67, horiz
+# r=-0.67, raw spin r=+0.68, all "significant" at p<0.01), but pooling
+# across all seasons for stability -- the same approach used for every
+# other pitch type's audit in this pass -- washes every one of them out
+# to noise (IVB r=+0.06 p=0.64, horiz r=-0.14 p=0.26, velo r=+0.11
+# p=0.39, raw spin r=-0.08 p=0.52). Textbook small-sample artifact: with
+# only 15 points, one or two pitchers can swing a correlation to +/-0.67
+# by chance, and it vanishes once more seasons are folded in.
+# Practical sweep confirms inertness regardless of which correlation you
+# believe: weight 0.0-0.40 against the real 2025 population moves nobody
+# more than 2 points, nobody crosses +/-5 at any setting tested.
+# Conclusion: same as CU/SL/ST (reviewed, confirmed adequate, left
+# as-is), but for a different governing reason -- not redundancy with
+# another credited term, but that the population is simply too small to
+# responsibly tune anything here, the exact caution this file already
+# applied to SV's other dimensions ("too small to trust a precisely-
+# calibrated discount... not over-fitting a magnitude decision to this
+# few data points"). Left at flat 0.10, abs shape.
 ACTIVE_SPIN_WEIGHT = {
     "FF": 0.25, "SI": 0.25, "FC": 0.10,
     "CH": 0.25, "FS": 0.25, "FO": 0.0,
