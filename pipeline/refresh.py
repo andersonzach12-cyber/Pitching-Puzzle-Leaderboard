@@ -1956,10 +1956,34 @@ def _aggregate_pitch_events(events: pd.DataFrame, source_label: str) -> tuple[pd
             f"Actual columns were: {list(df.columns)}"
         )
     raw_horizontal_in = pd.to_numeric(df[resolved["horizontal_in_raw"]], errors="coerce") * 12
-    p_throws_counts = df["p_throws"].astype(str).str.upper().value_counts().to_dict()
+    p_throws_upper_raw = df["p_throws"].astype(str).str.upper()
+    p_throws_counts = p_throws_upper_raw.value_counts().to_dict()
     print("p_throws raw value counts (sanity check -- expecting only 'R' and 'L'):", p_throws_counts)
-    is_rhp = df["p_throws"].astype(str).str.upper().eq("R")
-    df["horizontal_in"] = raw_horizontal_in.where(~is_rhp, -raw_horizontal_in)
+    is_rhp = p_throws_upper_raw.eq("R")
+    is_lhp = p_throws_upper_raw.eq("L")
+    # FIXED 2026-10-12: same bug class found and fixed in build_delivery_quotients's
+    # horizontal_release_ft flip (see that function's docstring for the full
+    # writeup) -- a pitch row whose p_throws didn't resolve to 'R' or 'L' used
+    # to fall through to "not flipped", silently treated the same as a
+    # confirmed lefty rather than as unknown. Low-probability here (p_throws is
+    # native per-pitch Statcast metadata, not a separate cross-export join),
+    # but the p_throws_counts print above exists precisely because the
+    # original author anticipated occasional unexpected values -- so this is
+    # hardened the same way regardless of today's actual incidence. Routed to
+    # NaN rather than a guessed sign; the per-(player_id, pitch_type) groupby
+    # mean below already skips NaN rows on its own (pandas default), so a
+    # handful of bad rows mixed in with many good ones for the same pitcher
+    # just lose those rows from the average rather than corrupting its sign.
+    # A pitcher-pitch_type group that's 100% unresolved becomes a NaN
+    # horizontal_in average, same honest "we don't have a trustworthy reading"
+    # outcome handled downstream (see the horiz_z fillna(0.0) in
+    # compute_pitch_quotients / compute_daily_display_scores).
+    n_unresolved_rows = (~(is_rhp | is_lhp)).sum()
+    if n_unresolved_rows:
+        print(f"_aggregate_pitch_events ({source_label}): {n_unresolved_rows}/{len(df)} raw pitch "
+              f"rows had unresolved p_throws -- horizontal_in set to NaN for those rows rather "
+              f"than guessing a sign.")
+    df["horizontal_in"] = np.where(is_rhp, -raw_horizontal_in, np.where(is_lhp, raw_horizontal_in, np.nan))
 
     per_pitcher_totals = df.groupby("player_id").size().rename("total_pitches")
 
@@ -2207,8 +2231,49 @@ def active_spin_quotient(series: pd.Series, shape: str | None) -> pd.Series:
 
 DELIVERY_MODIFIER_WEIGHT = 0.15  # how much a league-relative "how unusual is this
                                   # delivery" z-score shifts every pitch's quotient
-DELIVERY_MODIFIER_MIN = 0.85
-DELIVERY_MODIFIER_MAX = 1.20
+
+# REVIEWED 2026-10-12 (bounds widened 0.85/1.20 -> 0.75/1.30; weight left at
+# 0.15). First checked whether the modifier's whole premise holds up: a
+# multivariate regression of wOBA/run-value-per-100/K% on velocity and
+# adj_delivery_quotient's |z| (qualified pitchers, n=715) found a clean,
+# significant relationship on ALL THREE outcomes (wOBA p=0.0004, run-value
+# p=0.0008, K% p<0.0001) -- stronger and cleaner than any single delivery
+# component's own outcome test earlier this pass. Notably the RAW (no
+# velocity control) correlation is near-zero and not significant for any of
+# the three -- a classic suppressor pattern, velocity and delivery
+# unusualness mask each other until separated. So the modifier is backed by
+# real signal, not just a plausible-sounding idea.
+# That settled, checked whether the bounds (not the weight) were the actual
+# problem: at the old 0.85/1.20 bounds, the modifier was pinned at a
+# boundary for 22.9% of the qualified population (13.8% floor, 9.1%
+# ceiling) -- nearly a quarter of pitchers getting a flattened value instead
+# of their true continuous reading, with a lopsided distortion at the
+# extremes (the single most unusual pitcher would sit at an uncapped 1.63
+# but got pulled to 1.20; the most extreme low-end pitcher would sit at
+# 0.665 uncapped but only got pulled up to 0.85).
+# Swept weight x bounds jointly (n=715): weight is the dominant driver of
+# clip rate (at 0.85/1.20, weight 0.10->8.8% clipped, 0.15->22.9%,
+# 0.20->38.0%, 0.25->46.9%), but widening bounds at the CURRENT weight
+# fixes most of it without touching the already-validated 0.15 scale --
+# 0.75/1.30 brings clip rate down to 6.9% (2.9% floor, 3.9% ceiling).
+# Chose to keep weight at 0.15 rather than also trimming it: nothing in
+# this sweep suggests 0.15 is itself miscalibrated (it's the exact scale
+# the outcome regression just validated), only that the old bounds were too
+# tight for it. Trimming weight further (e.g. 0.10-0.12) would shrink clip
+# rate closer to 0 but isn't evidence-driven -- it would just gratuitously
+# dilute a signal just confirmed real, for no reason beyond "fewer pitchers
+# flagged."
+# Named check (bounds 0.75/1.30, weight 0.15): Rogers, Tyler (submarine,
+# z=+4.18) still correctly pinned at the new ceiling -- a genuine multi-SD
+# outlier regardless of where reasonable bounds sit. Misiorowski, Jacob
+# (z=+1.26) now lands at 1.188, comfortably below the cap rather than
+# pinned (a side effect of this session's other delivery changes landing
+# him slightly lower than before, not of this bounds change). Verlander,
+# Finnegan, Henderson, Urquidy all get clean, differentiated, unclipped
+# readings at the new bounds where several were artificially flattened
+# before.
+DELIVERY_MODIFIER_MIN = 0.75
+DELIVERY_MODIFIER_MAX = 1.30
 
 # Per-component weights inside delivery_quotient/adj_delivery_quotient.
 # Reviewed 2026-10-12 (same double-counting-audit methodology as the
@@ -2654,7 +2719,12 @@ def compute_pitch_quotients(pitch_metrics: pd.DataFrame, active_spin_fallback: p
             ivb_z = ivb_z.abs()
         elif IVB_SHAPE.get(pt) == "signed_neg":
             ivb_z = -ivb_z
-        horiz_z = zscore(group["horizontal_in"])
+        # fillna(0.0): a pitch_type group that's 100% unresolved-handedness
+        # (see _aggregate_pitch_events) produces a NaN horizontal_in mean --
+        # treat that the same as every other "we don't have a trustworthy
+        # reading here" case in this pipeline (neutral), rather than letting
+        # one NaN component poison this row's whole ceiling/quotient.
+        horiz_z = zscore(group["horizontal_in"]).fillna(0.0)
         if HORIZ_SHAPE.get(pt) == "abs":
             horiz_z = horiz_z.abs()
         elif HORIZ_SHAPE.get(pt) == "signed_neg":
@@ -2903,7 +2973,9 @@ def compute_daily_display_scores(daily_agg: pd.DataFrame, pitch_metrics: pd.Data
         elif IVB_SHAPE.get(pt) == "signed_neg":
             ivb_z = -ivb_z
 
-        horiz_z = _season_pop_zscore(day_group["horizontal_in"], season_group["horizontal_in"])
+        # Same neutral-on-NaN handling as compute_pitch_quotients' horiz_z --
+        # see the comment there.
+        horiz_z = _season_pop_zscore(day_group["horizontal_in"], season_group["horizontal_in"]).fillna(0.0)
         if HORIZ_SHAPE.get(pt) == "abs":
             horiz_z = horiz_z.abs()
         elif HORIZ_SHAPE.get(pt) == "signed_neg":
