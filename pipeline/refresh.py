@@ -859,6 +859,30 @@ IVB_WEIGHT_ABOVE_AVG_OVERRIDE = {
     "SI": 0.60,
     "FC": 0.50,
     "FS": 0.35,
+    # CU: 0.45 (2026-10-12, same CU shape review as VELO_WEIGHT_BELOW_AVG_
+    # OVERRIDE's CU entry above -- see that entry for the velocity half of
+    # this review). CU's IVB_SHAPE is "abs" (more drop OR more carry both
+    # credited); outcome regression against the real 2026 qualified CU
+    # population (n=279) found the carry (above-average IVB) side does
+    # NOT hold up the way the drop side does -- significant on k_percent
+    # (p<0.0001) and wOBA (p=0.03), borderline on run-value (p=0.07), all
+    # favoring more drop over more carry. A quadratic check confirmed
+    # directional, not symmetric (z^2 never significant). Named case that
+    # drove this: Bernardino, Brennan -- the single most carry-heavy CU in
+    # the sample -- has unremarkable real outcomes (.235 wOBA, 24.3% K,
+    # both roughly average for the pitch type) but was scoring a wildly
+    # inflated 163 display-score purely off that one extreme IVB reading
+    # with no discount at all. Swept 0.95 (no discount) down to 0.0:
+    # smooth, no cliffs (mean|delta| 0.66/1.20/1.76/2.36/2.96/3.56 at
+    # 0.75/0.60/0.45/0.30/0.15/0.0, moved>=10 count 0/1/5/9/13/16). Chose
+    # 0.45 (more aggressive than the initially-recommended 0.60) after
+    # confirming elite drop-side pitchers (Ashby, Aaron: .172 wOBA, 61.8%
+    # K) gain ground rather than lose it as the carry side compresses, and
+    # genuinely hard, high-K pitchers whose value comes from velocity
+    # rather than IVB (Misiorowski, Jacob) are essentially unaffected
+    # either way (109->110 across the whole sweep) -- confirming this
+    # lever only touches the pitchers it's meant to.
+    "CU": 0.45,
 }
 
 # The velocity-side counterpart to IVB_WEIGHT_BELOW_AVG_OVERRIDE/
@@ -921,7 +945,26 @@ IVB_WEIGHT_ABOVE_AVG_OVERRIDE = {
 # 0-1 point, confirming the two intended extremes stay intact.
 VELO_WEIGHT_BELOW_AVG_OVERRIDE = {
     "FC": 0.50,
-    "CU": 0.60,
+    # CU: 0.60 -> 0.45 (2026-10-12, delivery-adjacent CU shape review).
+    # Outcome regression against the real 2026 qualified CU population
+    # (n=279, >=20 pitches) found a clean, significant, one-directional
+    # velocity effect (woba p=0.004, k_percent p<0.0001, whiff% p<0.0001,
+    # all favoring harder curves) -- a quadratic check confirmed it's
+    # directional, not symmetric (z^2 term never significant, p=0.85).
+    # Swept 0.60 (shipped) down to 0.0 at the shipped weight: smooth,
+    # no cliffs (mean|delta| 0.51/1.06/1.62/2.20 at 0.45/0.30/0.15/0.0).
+    # Chose 0.45 over a more severe value: named check showed Boyd,
+    # Matthew (73.1mph, but a genuinely GOOD curve -- .227 wOBA, 29.7% K)
+    # loses real credit (100->92) at the most severe settings tested,
+    # roughly as much as a genuinely bad slow curve like Rangel, Alan
+    # loses (113->106) -- going more severe doesn't improve the model's
+    # ability to tell a good slow curve from a bad one (uScore
+    # deliberately never uses outcomes in the formula itself), it just
+    # pushes the whole below-average-velocity group down together. 0.45
+    # was chosen as a firmer-but-still-gentle step (nobody moves >=10
+    # points yet at this setting) rather than committing to the bigger,
+    # less-reversible reshuffling at 0.15/0.0.
+    "CU": 0.45,
     "KC": 0.60,
     "SL": 0.35,
     "ST": 0.25,
