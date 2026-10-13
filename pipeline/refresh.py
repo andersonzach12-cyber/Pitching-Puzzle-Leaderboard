@@ -519,7 +519,79 @@ ACTIVE_SPIN_WEIGHT = {
 IVB_WEIGHT = 0.95
 HORIZ_WEIGHT = 0.25
 SPIN_WEIGHT = 0.10
-DELIVERY_WEIGHT_IN_USCORE = 0.3
+
+# DELIVERY_WEIGHT_IN_USCORE: reviewed 2026-10-12 (item #3 of the delivery
+# review -- how much delivery_quotient counts at the pitcher/uscore level,
+# on top of pitch_sum). Changed 0.3 -> 0.12, and this is a weight-shrink
+# fix for a real architectural double-count, not a magnitude judgment call
+# like the other deliver constants above.
+#
+# THE DOUBLE-COUNT: compute_pitchers() adds
+# `DELIVERY_WEIGHT_IN_USCORE * delivery_quotient` on top of pitch_sum --
+# but pitch_sum already has delivery_modifier baked into every pitch-type
+# quotient multiplicatively (see compute_pitch_quotients). So "this
+# pitcher's delivery is unusual" was being paid out through two channels:
+# once via the modifier scaling pitch_sum, and again via this flat
+# additive term. Quantified it directly against the real qualified
+# population (n=713): isolated the modifier's contribution to pitch_sum
+# (actual delivery_modifier vs. forced-neutral 1.0) and correlated it
+# against this additive term -- r=0.769 (R^2=0.591). That's not two
+# independent signals lining up by coincidence; ~59% of what this term
+# pays out is already reflected in pitch_sum before it's even added.
+#
+# NOT UNIFORM ACROSS PITCHERS: delivery_modifier is signed (can push
+# pitch_sum up OR down -- an unusually ORDINARY delivery gets a modifier
+# below 1.0); delivery_quotient is abs(z)-based (always >=0, measures
+# magnitude of unusualness only, never direction). So extreme-delivery
+# pitchers (Rogers, Misiorowski) get rewarded by both channels in the same
+# direction, compounding; very-ordinary-delivery pitchers (Finnegan,
+# Urquidy, Henderson) get penalized by the modifier but still collect a
+# positive flat credit here regardless -- the overlap is concentrated at
+# the unusual end, not spread evenly.
+#
+# TRIED AND REJECTED: replacing this term with the regression residual of
+# delivery_quotient on the modifier's pitch_sum contribution (i.e. "only
+# credit the part the modifier hasn't already paid for"). Flooring that
+# residual at 0 (to keep it non-negative like the original term) zeroed
+# out 61% of the qualified population, so matching the old term's total
+# payout required inflating the surviving weight 3.2x -- producing
+# absurd, unstable rank swings (several relievers jumped 600+ spots;
+# Misiorowski/Finnegan/Urquidy/Henderson all zeroed). Spearman rank
+# correlation with the old uscore fell to 0.807. Rejected as unstable.
+#
+# TRIED AND REJECTED: removing this term entirely (weight=0). Checked
+# directly rather than assuming: pitchers with a genuinely unusual
+# delivery but a thin/ordinary arsenal (e.g. Hudson, Backhus, Palmquist,
+# Mills -- pitch_sum under ~1.4) have an additive term that's LARGER than
+# their entire pitch-level score. For these pitchers this term isn't
+# redundant with the modifier at all -- the modifier's multiplicative
+# effect on a small pitch_sum is small in absolute terms even when the
+# underlying delivery is extreme, so this additive term is close to their
+# ONLY delivery credit. Zeroing it drops them 220-330 rank spots each for
+# no outcome-backed reason -- the double-count problem is concentrated
+# among extreme-delivery pitchers already helped by the modifier, a
+# different population than the thin-arsenal pitchers who'd be hurt by
+# removing the term outright. Spearman rank correlation with the old
+# uscore: 0.954 (worse than the shrink option below, and conceptually
+# wrong -- removes the only standalone delivery signal rather than
+# correcting the overlap).
+#
+# CHOSEN: proportional shrink, same shape (still delivery_quotient,
+# still abs(z)-based, still always >=0) -- just reduce the weight by the
+# share of its variance NOT already explained by the modifier:
+# 0.3 * (1 - R^2) = 0.3 * 0.409 = 0.123, rounded to 0.12. This doesn't
+# remove the structural overlap (correlation with the modifier's
+# contribution is still 0.769 at the new weight -- shrinking the weight
+# reduces how many POINTS the overlap is worth, it doesn't make the
+# overlap stop existing) but it's the only option tested that kept
+# rankings stable: Spearman rho = 0.985 vs. the old 0.3 weight, biggest
+# mover ~210 rank spots (Palmquist), nobody zeroed or wildly inflated.
+#
+# Verified against the live compute_pitchers()/compute_pitch_quotients()
+# functions via the stub-Supabase harness, against the real qualified
+# population (n=713, >=100 pitches) reconstructed from the uploaded
+# savant_data_13.csv pitch-type export.
+DELIVERY_WEIGHT_IN_USCORE = 0.12
 
 # CH-specific override of SPIN_WEIGHT/spin's shape (2026-10 model review,
 # CH spin pass, done after the CH velocity/IVB/horizontal passes above).
