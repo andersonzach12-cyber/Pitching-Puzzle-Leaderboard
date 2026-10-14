@@ -688,6 +688,64 @@ CH_SPIN_WEIGHT = 0.5
 FS_SPIN_WEIGHT = 0.5
 FS_SPIN_HIGH_DISCOUNT = 0.5
 
+# FS velocity gap-from-own-fastball term (2026-10-14 model review, FS
+# gap-architecture pass). Diagnosed via the same cross-model disagreement
+# method used for CH: FS pitchers' uScore-vs-(FanGraphs Stuff+/TJStuff+)
+# rank disagreement correlated at rho=+0.300 (p=0.003, n=102) with the
+# size of the gap between FS velocity and the pitcher's own usage-weighted
+# FF/SI baseline (build_fastball_baseline) -- pitchers with BIGGER
+# separation from their own fastball were favored more by the outside
+# models than by uScore, and pitchers with SMALLER separation (near-
+# fastball velocity) were favored more by uScore. Unlike CH, FS had no
+# fastball-reference term at all before this.
+#
+# Structure mirrors CH_IVB_GAP_WEIGHT/CH_IVB_RAW_WEIGHT (an abs gap term
+# blended with a raw population term), not CH_VELO_GAP_WEIGHT's signed-gap
+# structure, because FS velocity has two distinct good archetypes on
+# either side of the gap: Duran, Jhoan (near-fastball velocity, ~3mph gap,
+# both FG/TJStuff+ rate his FS 85th-93rd percentile) and Perales, Luis
+# (big gap, ~11.5mph, both outside models rate him top-10 in the FS
+# population). A first pass that extended CH's full branch set to FS
+# wholesale (signed gap included) was tested and rejected -- it broke
+# Duran's case specifically, moving him off the top of the FS leaderboard
+# despite both outside models independently confirming his splitter is
+# elite. The gap term here stays abs'd (rewards distance from the
+# population's typical gap in EITHER direction) for that reason.
+#
+# The raw term is SIGNED, not abs'd -- unlike the gap term, raw FS
+# velocity on its own doesn't have two legitimate archetypes the way the
+# gap does; harder is generally the better direction (domain judgment,
+# not an outcome-correlation result -- checked directly and raw velocity
+# shape, abs vs. signed, didn't measurably change agreement with FG/
+# TJStuff+ either way, both sit at essentially zero population-level
+# correlation regardless). Named effect: Duran moves to the top of the FS
+# board, while the three names getting outsized credit mainly from being
+# extreme on the SLOW end of raw velocity (Cruz, Fernando; Imanaga,
+# Shota; Kremer, Dean -- see FS's active-spin weight below, a separate,
+# larger driver for these three) give back a modest amount of credit.
+# 0.7/0.3 split swept against 0.6/0.4 and 0.4/0.6: population impact from
+# the split alone is minor (max|delta| 1-4 points across that range) since
+# gap and raw measure closely related information once both are
+# population z-scores -- kept at 0.7/0.3 (CH IVB's own precedent split)
+# rather than hunting for marginal gains the split isn't sensitive to.
+FS_VELO_GAP_WEIGHT = 0.7
+FS_VELO_RAW_WEIGHT = 0.3
+
+# FS IVB gap-from-own-fastball term (2026-10-14 model review, same pass as
+# FS_VELO_GAP_WEIGHT above). Same diagnostic method, applied to IVB
+# instead of velocity: rho=+0.211 (p=0.038, n=97) between |baseline_ivb -
+# FS_ivb_in| and the same cross-model disagreement measure -- real but
+# weaker than velocity's +0.300, likely because IVB_SHAPE["FS"]="abs"
+# already captures some of this via raw population distance alone. Same
+# abs-gap/abs-raw blend shape as the velocity term above (both sides of
+# an IVB gap are plausible -- no single "better" direction established),
+# same 0.7/0.3 split as a consistent default. The existing
+# IVB_WEIGHT_ABOVE_AVG_OVERRIDE (0.35, discounts the flat/carry side)
+# still applies on top of this blended term exactly as before -- this
+# term changes what ivb_z measures, not the later override logic.
+FS_IVB_GAP_WEIGHT = 0.7
+FS_IVB_RAW_WEIGHT = 0.3
+
 # Per-pitch-type override for how much vertical break (IVB) counts toward
 # the Ceiling formula, in place of the global IVB_WEIGHT -- the IVB
 # counterpart to HORIZ_WEIGHT_OVERRIDE below. Flat/symmetric (applies the
@@ -2846,6 +2904,17 @@ def compute_pitch_quotients(pitch_metrics: pd.DataFrame, active_spin_fallback: p
             else:
                 residual = pd.Series(0.0, index=group.index)
             velo_z = CH_VELO_GAP_WEIGHT * gap_z + CH_RAW_VELO_WEIGHT * residual
+        elif pt == "FS":  # see FS_VELO_GAP_WEIGHT's definition above
+            # Abs gap-from-own-fastball term (protects both the Duran and
+            # Perales archetypes) blended with a SIGNED raw term (harder
+            # raw velocity gets more credit, softer gets less) -- see the
+            # constant's definition above for the full rationale and the
+            # rejected "copy CH wholesale" alternative.
+            baseline_velo = group["player_id"].map(fastball_baseline["velo"])
+            velo_gap = baseline_velo - group["velo"]
+            gap_z = zscore(velo_gap).abs().fillna(0.0)
+            raw_z = velo_z
+            velo_z = FS_VELO_GAP_WEIGHT * gap_z + FS_VELO_RAW_WEIGHT * raw_z
         elif VELO_SHAPE.get(pt) == "abs":
             velo_z = velo_z.abs()
         elif VELO_SHAPE.get(pt) == "signed_neg":
@@ -2873,6 +2942,15 @@ def compute_pitch_quotients(pitch_metrics: pd.DataFrame, active_spin_fallback: p
             ivb_raw_weight = pd.Series(CH_IVB_RAW_WEIGHT, index=group.index)
             ivb_raw_weight[ivb_z_raw > 0] = CH_IVB_RAW_WEIGHT * CH_IVB_RAW_ABOVE_AVG_DISCOUNT
             ivb_z = CH_IVB_GAP_WEIGHT * ivb_gap_z + ivb_raw_weight * ivb_raw_z
+        elif pt == "FS":  # see FS_IVB_GAP_WEIGHT's definition above
+            # Same abs gap/raw blend as FS velocity above. The flat/carry-
+            # side IVB_WEIGHT_ABOVE_AVG_OVERRIDE discount still applies
+            # afterward, keyed off ivb_z_raw's sign, same as it always has.
+            baseline_ivb = group["player_id"].map(fastball_baseline["ivb_in"])
+            ivb_gap = baseline_ivb - group["ivb_in"]
+            gap_z = zscore(ivb_gap).abs().fillna(0.0)
+            raw_z = ivb_z.abs()
+            ivb_z = FS_IVB_GAP_WEIGHT * gap_z + FS_IVB_RAW_WEIGHT * raw_z
         elif IVB_SHAPE.get(pt) == "abs":
             ivb_z = ivb_z.abs()
         elif IVB_SHAPE.get(pt) == "signed_neg":
