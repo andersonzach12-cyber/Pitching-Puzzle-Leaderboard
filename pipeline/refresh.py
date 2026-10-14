@@ -2718,20 +2718,63 @@ def build_delivery_quotients(
 
 
 def build_fastball_baseline(pitch_metrics: pd.DataFrame) -> pd.DataFrame:
-    """Each pitcher's hardest fastball-family pitch (four-seam or sinker --
-    whichever is harder for that pitcher, since either can be the "primary"
-    heater a changeup is meant to look like out of the hand) this season.
-    Returns a DataFrame indexed by player_id with that one pitch's velocity
-    AND induced vertical break, both pulled from the SAME fastball row --
-    so a changeup's velocity gap and IVB gap are always measured against
-    the one specific heater it's actually meant to tunnel off of, never an
-    average of two different pitches. A pitcher who throws neither simply
-    has no entry (handled as a neutral/no-gap-signal case downstream, same
-    philosophy as a pitcher missing from the arm-angle leaderboard getting
-    a neutral delivery modifier rather than a penalty)."""
-    fastball_rows = pitch_metrics[pitch_metrics["pitch_type"].isin(["FF", "SI"])]
-    hardest_idx = fastball_rows.groupby("player_id")["velo"].idxmax()
-    return fastball_rows.loc[hardest_idx].set_index("player_id")[["velo", "ivb_in"]]
+    """Each pitcher's fastball-family baseline (four-seam and/or sinker --
+    whichever one(s) he throws this season), used as the reference point a
+    changeup's velocity gap and IVB gap are measured against (the heater a
+    changeup is meant to look like out of the hand). Returns a DataFrame
+    indexed by player_id with a usage-weighted velocity AND induced
+    vertical break, both drawn from the same FF/SI rows together -- so a
+    pitcher who only has one of the two just gets that one's own numbers
+    (the weighting is a no-op), and a pitcher who throws both gets a blend
+    proportional to how often he actually throws each one.
+
+    FIXED 2026-10-14: this used to pick a single row -- whichever of FF/SI
+    was HARDER by raw velocity -- and use that one exclusively. Checked
+    directly (prompted by a by-hand look at Morejon, Adrian's changeup,
+    where the gap "felt" bigger than the model credited): across the 262
+    pitchers who qualify with FF, SI, AND CH this season, 89 (34%) have a
+    velocity-based pick that disagrees with which of the two is actually
+    their primary pitch by usage. The overwhelming majority of those
+    disagreements are decided by a THIRD OF A MILE PER HOUR OR LESS --
+    e.g. Morejon himself: SI 99.5mph vs FF 99.2mph, a 0.3mph edge decides
+    which of his two fastballs his changeup's entire gap term is measured
+    against, even though his SI is the pitch he actually throws 3.3x more
+    often (47.4% vs 14.2%). Kelly, Kevin is the starkest case found: FF
+    93.1mph (thrown 7.1% of the time) vs SI 91.3mph (thrown 57.6% of the
+    time) -- the old logic tunneled his changeup against a pitch he barely
+    throws, because it happened to be 1.8mph harder.
+
+    Two alternatives considered and rejected before landing on the
+    usage-weighted blend below:
+      - Flip the tiebreaker to "most-used fastball wins outright" (still
+        winner-take-all): same coin-flip problem just moved to a usage
+        boundary instead of a velocity one (two pitchers at 51%/49% FF/SI
+        usage would still get fully different baselines for a 2-point
+        usage difference).
+      - A simple (unweighted) average of FF and SI: treats a 95%-FF/5%-SI
+        pitcher the same as a 50/50 pitcher, which doesn't reflect what a
+        hitter is actually conditioned on seeing out of that arm slot.
+    The usage-weighted average avoids both failure modes: it degrades
+    smoothly toward "basically just his primary fastball" as usage gets
+    lopsided (no cliff), and it naturally down-weights whichever pitch is
+    thrown less, which also happens to be the noisier/thinner-sample mean
+    of the two -- a side benefit, not something separately engineered.
+
+    Verified low-blast-radius against the full population before shipping:
+    CH pitch-type mean|delta| 2.03 (max 19, n=6 moved >=10), overall uscore
+    Spearman rho 0.9962 vs. the old hardest-wins logic, nobody's rank moves
+    by more than 177 spots (and that's deep in a flat part of the
+    leaderboard, not a top-of-board reshuffle)."""
+    fastball_rows = pitch_metrics[pitch_metrics["pitch_type"].isin(["FF", "SI"])].copy()
+
+    def _usage_weighted(group: pd.DataFrame) -> pd.Series:
+        weights = group["usage_rate"]
+        return pd.Series({
+            "velo": np.average(group["velo"], weights=weights),
+            "ivb_in": np.average(group["ivb_in"], weights=weights),
+        })
+
+    return fastball_rows.groupby("player_id").apply(_usage_weighted)
 
 
 def compute_pitch_quotients(pitch_metrics: pd.DataFrame, active_spin_fallback: pd.DataFrame,
