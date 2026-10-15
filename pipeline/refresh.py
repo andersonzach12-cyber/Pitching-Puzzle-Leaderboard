@@ -1001,6 +1001,55 @@ IVB_WEIGHT_ABOVE_AVG_OVERRIDE = {
 # 1.38, only 1 pitcher of 303 CU/KC rows moving >=10 points) and named
 # archetype checks (Glasnow's firm curve, Valdez's slow/loopy one) moved by
 # 0-1 point, confirming the two intended extremes stay intact.
+# EXPERIMENT 2026-10-15, not yet adopted: SL velocity, below-average side.
+# Same diagnosis as the horizontal fix above, applied to velocity. Of 188
+# below-average-velocity SL pitchers, only 25 are genuinely extreme (>=1.5
+# SD below the 86.3mph/2.6std population, i.e. the Sale/Corbin tier this
+# pitch type's "abs" shape was built to protect). Checked the two groups
+# separately against the uScore-vs-(FanGraphs Stuff+/TJStuff+) disagreement:
+# the 25-pitcher extreme tail shows no significant relationship (rho=-0.264,
+# p=0.20) -- that archetype is being treated reasonably -- but the other 163
+# "merely modest" pitchers show a strong, clean one (rho=-0.427, p<0.0001):
+# the slower they are, even nowhere near Sale/Corbin territory, the more
+# uScore overrates them relative to consensus. The existing 0.35 discount
+# softens this but can't fix it -- it's still always a POSITIVE credit for
+# anyone below average, just a smaller one, so it still rewards "merely
+# unremarkable" velocity as if it were a muted version of the real
+# archetype rather than recognizing it isn't the archetype at all.
+#
+# SL_VELO_EXTREME_THRESHOLD (in standard deviations below average) marks
+# where the real archetype starts. At or past that line, a continuous bonus
+# (SL_VELO_EXTREME_BONUS_WEIGHT) takes back over and grows with how extreme
+# the pitcher is -- zero exactly at the threshold (so the two pieces join
+# without a jump). Below that line, velocity is a genuine signed penalty
+# (more below-average = more penalized), matching the "single-defining-
+# direction" treatment every other below-average-velocity pitch type
+# already gets.
+#
+# Calibration history: an initial pass at 1.5 SD / weight 3.3 (chosen to
+# land Sale and Corbin, the two archetypal cases, close to their old
+# abs+0.35-discount credit) corrected the target cases well in isolation,
+# but combined-test population impact revealed a side effect -- because so
+# few other pitchers were near that threshold, the fix's correction was
+# concentrated right at the boundary, which shifted the whole SL
+# population's quotient distribution enough to drag the protected
+# archetypes themselves down on the RESCALED display_score (Sale 162->150,
+# Walker 113->104) despite their own velo_z term barely moving. A sweep of
+# lower threshold/weight pairs (which spread the same total correction
+# across more of the below-average range instead of concentrating it at
+# one boundary) found 0.5 SD / weight 1.6 clearly dominates: Sale 162->160,
+# Corbin 112->110, Walker 113->113, Brash 138->140 (all within noise of
+# stable), while Rocker -- the clearest overrated case -- still drops
+# 117->97 and Littell/Nance/Ross are essentially unchanged from the 1.5/3.3
+# version. Population footprint also shrinks (mean|delta| 4.11 vs 5.18,
+# max|delta| 20 vs 31, only 1 pitcher moving >=20 vs 12) and the
+# correlation gain against outside models holds (FG Stuff+ rho 0.149->
+# 0.242, TJStuff+ rho 0.208->0.414 -- both comparable to or better than the
+# harsher setting, since that version's own population churn partly worked
+# against itself).
+SL_VELO_EXTREME_THRESHOLD = 0.5
+SL_VELO_EXTREME_BONUS_WEIGHT = 1.6
+
 VELO_WEIGHT_BELOW_AVG_OVERRIDE = {
     "FC": 0.50,
     # CU: 0.60 -> 0.45 (2026-10-12, delivery-adjacent CU shape review).
@@ -1810,6 +1859,17 @@ CH_AS_LOW_DISCOUNT = 0.5
 # calling cards (velocity separation, the IVB extremes resolved above)
 # are the more clearly defining traits. Left at 0.25, confirmed rather
 # than untouched.
+# EXPERIMENT 2026-10-14, not yet adopted: weight on the continuous
+# wrong-way bonus added to SL's horizontal term (see the "EXPERIMENT"
+# comment inside compute_pitch_quotients's horizontal block for the full
+# mechanism and rationale). Chosen so a pitcher at the most extreme
+# wrong-way value actually observed in the 2026 population (Imai,
+# Tatsuya: +4.2in) ends up with total horiz_z credit comparable to what
+# the old flat abs() shape gave him (~2.9), while a pitcher only barely
+# into wrong-way territory (e.g. +0.5in) stays net-penalized rather than
+# flipping to a reward.
+SL_WRONGWAY_BONUS_WEIGHT = 3.9
+
 HORIZ_WEIGHT_OVERRIDE = {
     "SL": 0.49, "ST": 1.05, "SV": 0.7,
 }
@@ -2915,6 +2975,19 @@ def compute_pitch_quotients(pitch_metrics: pd.DataFrame, active_spin_fallback: p
             gap_z = zscore(velo_gap).abs().fillna(0.0)
             raw_z = velo_z
             velo_z = FS_VELO_GAP_WEIGHT * gap_z + FS_VELO_RAW_WEIGHT * raw_z
+        elif pt == "SL":  # EXPERIMENT 2026-10-15, see SL_VELO_EXTREME_THRESHOLD above
+            # Signed base (penalizes below-average velocity proportional to
+            # how far below average, same as every pitch type's default
+            # "signed" treatment) plus a continuous bonus that only grows
+            # once a pitcher is at least SL_VELO_EXTREME_THRESHOLD standard
+            # deviations below average -- zero before that point, so it
+            # can't soften the penalty for the merely-modest majority this
+            # fix targets. Above-average rows are unaffected (the bonus
+            # term is always 0 there, since being below average is a
+            # prerequisite).
+            slowness = (-velo_z_raw).clip(lower=0.0)
+            extreme_bonus = SL_VELO_EXTREME_BONUS_WEIGHT * (slowness - SL_VELO_EXTREME_THRESHOLD).clip(lower=0.0)
+            velo_z = velo_z_raw + extreme_bonus
         elif VELO_SHAPE.get(pt) == "abs":
             velo_z = velo_z.abs()
         elif VELO_SHAPE.get(pt) == "signed_neg":
@@ -2961,7 +3034,42 @@ def compute_pitch_quotients(pitch_metrics: pd.DataFrame, active_spin_fallback: p
         # reading here" case in this pipeline (neutral), rather than letting
         # one NaN component poison this row's whole ceiling/quotient.
         horiz_z = zscore(group["horizontal_in"]).fillna(0.0)
-        if HORIZ_SHAPE.get(pt) == "abs":
+        if pt == "SL":  # EXPERIMENT 2026-10-14: wrong-way-aware signed_neg
+            # Only 15/412 (3.6%) of qualifying SL pitchers actually break
+            # arm-side (positive horizontal_in) -- the rare archetype
+            # (Sasaki-style) that originally justified HORIZ_SHAPE["SL"]
+            # = "abs". The other 96.4% break glove-side (the normal
+            # direction) with varying amounts of sweep. Plain abs()
+            # rewards distance from the population MEAN in either
+            # direction equally -- which means a pitcher with merely
+            # BELOW-AVERAGE (weak) glove-side sweep gets the same kind of
+            # credit as a genuine extreme-sweep or genuine wrong-way
+            # breaker, just for being unremarkable in the less-common
+            # direction. Checked directly: the abs-credited term
+            # correlates at rho=+0.258 (p<0.0001, n=413) with uScore
+            # overrating a pitcher relative to FanGraphs Stuff+/TJStuff+
+            # (which agree with EACH OTHER at 0.531 -- a real, solid
+            # consensus, not a "hard to model" pitch type). Named cases:
+            # Littell, Rocker, Nance, Ross (uScore's biggest SL overrates
+            # vs. both outside models) all have weak, below-average
+            # glove-side movement (-0.36 to -2.04in vs. -4.0in average),
+            # not genuine wrong-way breaks.
+            #
+            # Fix: signed_neg as the base (reward MORE glove-side sweep,
+            # penalize weak/characterless sweep, matching the pitch's
+            # single defining direction for the 96.4% majority) PLUS a
+            # continuous bonus that only activates for genuinely POSITIVE
+            # (true wrong-way) raw horizontal_in, growing with how far
+            # into that rare territory the pitcher actually is -- not
+            # with distance from the glove-side mean. The bonus is zero
+            # for every pitcher at or below 0in, so it can't hand out
+            # credit to the weak-sweep middle this fix is meant to stop
+            # rewarding. SL_WRONGWAY_BONUS_WEIGHT's own definition above
+            # has the magnitude derivation.
+            std_horiz = group["horizontal_in"].std()
+            wrongway_bonus = (group["horizontal_in"].clip(lower=0.0) / std_horiz).fillna(0.0)
+            horiz_z = -horiz_z + SL_WRONGWAY_BONUS_WEIGHT * wrongway_bonus
+        elif HORIZ_SHAPE.get(pt) == "abs":
             horiz_z = horiz_z.abs()
         elif HORIZ_SHAPE.get(pt) == "signed_neg":
             horiz_z = -horiz_z
@@ -3041,7 +3149,11 @@ def compute_pitch_quotients(pitch_metrics: pd.DataFrame, active_spin_fallback: p
         # the opposite (above-average velocity discounted), so there's no
         # analogous "above_avg_velo_weight" branch here.
         below_avg_velo_weight = VELO_WEIGHT_BELOW_AVG_OVERRIDE.get(pt)
-        if pt != "CH" and below_avg_velo_weight is not None:
+        if pt not in ("CH", "SL") and below_avg_velo_weight is not None:
+            # SL excluded (2026-10-15 experiment): its below-average
+            # handling is now done directly in velo_z above (signed penalty
+            # + extreme-tail bonus), so applying this flat discount on top
+            # would double-count the same adjustment.
             velo_weight = pd.Series(1.0, index=group.index)
             velo_weight[velo_z_raw < 0] = below_avg_velo_weight
         else:
