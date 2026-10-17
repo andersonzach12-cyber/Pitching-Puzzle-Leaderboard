@@ -1074,7 +1074,10 @@ VELO_WEIGHT_BELOW_AVG_OVERRIDE = {
     "CU": 0.45,
     "KC": 0.60,
     "SL": 0.35,
-    "ST": 0.25,
+    # ST removed (2026-10-17 model review): velocity shape changed from
+    # "abs" to plain signed above (see VELO_SHAPE's ST note for the full
+    # rationale), so there is no more below-average positive credit left
+    # to discount -- this dict's entire purpose for ST is moot.
 }
 
 # SL's 0.35 (see VELO_SHAPE's SL note above for the full "abs" shape
@@ -1543,8 +1546,55 @@ IVB_SHAPE = {
 # override was added on top of this -- full symmetric credit, consistent
 # with not over-fitting a magnitude decision to this few data points.
 VELO_SHAPE = {
-    "CU": "abs", "KC": "abs", "FS": "abs", "FC": "abs", "SL": "abs", "ST": "abs",
+    "CU": "abs", "KC": "abs", "FS": "abs", "FC": "abs", "SL": "abs",
     "SV": "abs",
+    # ST removed from "abs" (2026-10-17 model review, ST velocity shape
+    # pass, done after the SL horizontal/velocity fixes above). Checked
+    # for a genuine small exception group the way SL had (Sale/Corbin)
+    # before changing anything: pushed the disagreement-vs-TJStuff+ check
+    # deeper into the below-average-velocity tail (0 to 2.75 SD in 0.25
+    # steps) and found no point where it cleanly goes away and stays
+    # away -- unlike SL, where >=1.5 SD cleanly flipped non-significant,
+    # ST's correlation stays significant through most of the range and
+    # only gets noisy at the extreme tail (n=9, trending back toward
+    # MORE disagreement, not less). The named "deceptive lefty" group
+    # this abs shape was built to protect (Manaea, Yarbrough, Cosgrove,
+    # Palmquist) is itself mixed, not a protected class: Manaea and
+    # Barlow track TJStuff+ reasonably, but Yarbrough/Cosgrove/Palmquist
+    # are real outliers (+18 to +28 vs. TJStuff+), and no shared trait
+    # (arm angle, extension, release point, spin) separates a legitimate
+    # sub-archetype from the rest of the below-average population.
+    # Checked for mechanical double-counting with horizontal/active-spin
+    # (the CH/FS-style redundancy fix) too -- not present here, the
+    # credited terms don't correlate with each other in the below-average
+    # half (p>0.24 both).
+    #
+    # Independent of any outside-model comparison, the shape itself
+    # looks wrong: TJStuff+ (the only outside model that grades sweepers
+    # on their own -- FanGraphs Stuff+ and PitchingBot both fold ST into
+    # their SL grade) rewards raw sweeper velocity almost monotonically
+    # (rho=+0.67), but uScore's symmetric abs credit made its own ST
+    # velocity term flat against raw velocity (rho=+0.01) -- the abs
+    # shape mechanically canceling a real, one-directional signal, same
+    # failure mode as SL's, just with no minority archetype to carve out
+    # this time. No longer listed here means ST falls through to the
+    # plain signed zscore every fastball-family pitch type already gets
+    # by default -- full, direct credit for velocity, no transform.
+    #
+    # Population impact (n=293 qualifying ST pitches): mean|delta|=4.07,
+    # max|delta|=46, 21 pitchers moved >=10 points, 6 moved >=20. This is
+    # the largest single-pitch-type swing shipped in this review -- the
+    # old abs shape had been giving real, substantial credit to the
+    # whole below-average-velocity half, not a narrow edge case, so
+    # removing it costs real points for named pitchers (Palmquist -46,
+    # Cosgrove -44, Yarbrough -37, Manaea -34). Max Meyer, the power-
+    # sweeper archetype explicitly protected elsewhere in this file
+    # (VELO_WEIGHT_BELOW_AVG_OVERRIDE/IVB_WEIGHT_OVERRIDE), stays stable
+    # (120->122) since signed continues to reward his high velocity the
+    # same way abs did. TJStuff+ correlation improves rho 0.42->0.65.
+    # Accepted despite the churn: no gentler alternative was found that
+    # still captures the pitch's real shape (see VELO_WEIGHT_BELOW_AVG_
+    # OVERRIDE's ST note for the discount this change also removes).
 }
 
 # Changeup velocity is scored as a blend of two things, rather than a single
