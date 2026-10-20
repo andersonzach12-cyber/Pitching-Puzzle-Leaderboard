@@ -77,24 +77,11 @@ async function fetchTopN(pitchType) {
   }));
 }
 
-function formatDelta(v) {
-  if (v === null || v === undefined || Number.isNaN(v)) return "-";
-  const rounded = Math.round(Number(v));
-  const sign = rounded > 0 ? "+" : "";
-  return sign + String(rounded);
-}
-
-// display_score/quotient are season-to-date cumulative averages, so late in
-// a season one more day's pitches barely move the number -- a plain
-// day-over-day comparison (the old approach, using prev_display_score)
-// naturally flattens out to almost nothing once pitchers have a big enough
-// season sample banked. A full week's worth of new pitches is a bigger
-// share of that total, so this compares against score_snapshots' ~7-day-old
-// row instead of yesterday's, to surface real movement again.
-const MOVERS_WINDOW_DAYS = 7;
-
 // Local calendar date N days back, as YYYY-MM-DD -- same convention as
-// todayDateString() below, just parameterized.
+// todayDateString() below, just parameterized. Still used by
+// fetchYesterdaysBest() below (daysAgoDateString(1)) even though the
+// biggest-movers box that used to need the general N-days-back case has
+// been removed.
 function daysAgoDateString(days) {
   const d = new Date();
   d.setDate(d.getDate() - days);
@@ -102,84 +89,6 @@ function daysAgoDateString(days) {
   const mm = String(d.getMonth() + 1).padStart(2, "0");
   const dd = String(d.getDate()).padStart(2, "0");
   return `${yyyy}-${mm}-${dd}`;
-}
-
-async function fetchMovers() {
-  const cutoff = daysAgoDateString(MOVERS_WINDOW_DAYS);
-  const [{ data: current, error: currentError }, { data: snapshots, error: snapshotError }] = await Promise.all([
-    client
-      .from("pitch_metrics")
-      .select("player_id, pitch_type, display_score, pitchers(pitcher_name)")
-      .not("display_score", "is", null)
-      .limit(5000),
-    // Every snapshot AT LEAST a week old, newest first -- reduced below to
-    // the single closest-to-a-week-back row per (player_id, pitch_type).
-    // Ordering by snapshot_date desc means the first one seen per pitcher is
-    // the freshest one that still qualifies as "old enough", which tolerates
-    // an occasional missed-refresh day without losing the comparison
-    // entirely (it just compares against 8 or 9 days back instead of 7).
-    client
-      .from("score_snapshots")
-      .select("player_id, pitch_type, display_score, snapshot_date")
-      .lte("snapshot_date", cutoff)
-      .order("snapshot_date", { ascending: false })
-      .limit(20000),
-  ]);
-  if (currentError) throw currentError;
-  if (snapshotError) throw snapshotError;
-
-  const snapshotByKey = new Map();
-  for (const s of snapshots) {
-    if (s.display_score === null || s.display_score === undefined) continue;
-    const key = `${s.player_id}|${s.pitch_type}`;
-    if (!snapshotByKey.has(key)) snapshotByKey.set(key, s.display_score);
-  }
-
-  const withDelta = current
-    .map((r) => {
-      const prevScore = snapshotByKey.get(`${r.player_id}|${r.pitch_type}`);
-      if (prevScore === undefined) return null; // no snapshot old enough yet for this pitcher/pitch
-      return {
-        player_id: r.player_id,
-        pitcher_name: formatPitcherName(r.pitchers ? r.pitchers.pitcher_name : "(unknown)"),
-        pitch_type: r.pitch_type,
-        delta: r.display_score - prevScore,
-      };
-    })
-    .filter((r) => r && !Number.isNaN(r.delta));
-
-  return biggestMovers(withDelta);
-}
-
-const MOVERS_TOP_N = 8;
-
-// A single "biggest movers" list, ranked by the SIZE of the change either
-// direction -- a -24 and a +24 are equally notable swings -- rather than
-// two separate top-5 gainers/decliners lists. Direction is kept on each row
-// (as `up`) so the caller can still style/arrow it.
-function biggestMovers(withDelta) {
-  return [...withDelta]
-    .sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta))
-    .slice(0, MOVERS_TOP_N)
-    .map((r) => ({ ...r, up: r.delta > 0 }));
-}
-
-function renderMoverBox(title, rows) {
-  const items = rows.map((r) => `
-    <li>
-      <span class="mover-arrow ${r.up ? "mover-up" : "mover-down"}" aria-hidden="true">${r.up ? "&#9650;" : "&#9660;"}</span>
-      <a class="mover-name" href="${playerProfileUrl(r.player_id, r.pitcher_name)}">${escapeHtml(r.pitcher_name || "")}</a>
-      <span class="mover-pitch">${escapeHtml(PITCH_LABELS[r.pitch_type] || r.pitch_type)}</span>
-      <span class="mover-delta ${r.up ? "mover-up" : "mover-down"}">${formatDelta(r.delta)}</span>
-    </li>
-  `).join("");
-
-  return `
-    <div class="mover-box">
-      <h3>${escapeHtml(title)}</h3>
-      <ol class="mover-list">${items || "<li class=\"home-empty\">No data yet &mdash; check back after the next refresh</li>"}</ol>
-    </div>
-  `;
 }
 
 // --------------------------------------------------------------------------
@@ -432,12 +341,8 @@ async function loadHome() {
   const moversRow = document.getElementById("movers-row");
   status.textContent = "Loading...";
   try {
-    const [pitchResults, movers, yesterdaysBest, watchList] = await Promise.all([
+    const [pitchResults, yesterdaysBest, watchList] = await Promise.all([
       Promise.all(HOME_PITCH_TYPES.map((pt) => fetchTopN(pt).then((rows) => ({ pt, rows })))),
-      fetchMovers().catch((err) => {
-        console.error(err);
-        return [];
-      }),
       fetchYesterdaysBest().catch((err) => {
         console.error(err);
         return [];
@@ -448,10 +353,9 @@ async function loadHome() {
       }),
     ]);
     grid.innerHTML = pitchResults.map(({ pt, rows }) => renderCard(pt, rows)).join("");
-    moversRow.innerHTML =
-      renderMoverBox("Past Week's Biggest Movers", movers) +
-      renderYesterdayBox(yesterdaysBest) +
-      renderWatchBox(watchList);
+    // Two centered boxes, watch-list first -- the biggest-movers box has
+    // been removed for now (see git history to restore it).
+    moversRow.innerHTML = renderWatchBox(watchList) + renderYesterdayBox(yesterdaysBest);
     status.textContent = "";
   } catch (err) {
     console.error(err);
