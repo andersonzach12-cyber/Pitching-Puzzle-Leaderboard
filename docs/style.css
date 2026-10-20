@@ -237,20 +237,15 @@ body {
   color: var(--accent-strong);
 }
 
-/* Biggest-movers / today's-starters boxes, centered as a row above the
-   pitch-type grid. */
+/* Today's-starters / yesterday's-best boxes, centered as a row above the
+   pitch-type grid. (The biggest-movers box has been removed for now --
+   see git history to restore the 3-column layout alongside it.) */
 .movers-row {
   display: grid;
-  grid-template-columns: repeat(3, minmax(230px, 340px));
+  grid-template-columns: repeat(2, minmax(230px, 340px));
   gap: 1rem;
   justify-content: center;
   margin: 0 auto 1.75rem;
-}
-
-@media (max-width: 900px) {
-  .movers-row {
-    grid-template-columns: repeat(2, minmax(230px, 340px));
-  }
 }
 
 .mover-box {
@@ -826,4 +821,4 @@ footer {
   th, td { padding: 0.5rem; font-size: 0.85rem; }
   .page-header h1 { font-size: 1.5rem; }
   .detail-stats dl { grid-template-columns: auto auto; }
-} 
+}
