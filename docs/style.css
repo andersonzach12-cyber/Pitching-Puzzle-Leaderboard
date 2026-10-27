@@ -373,10 +373,62 @@ body {
   white-space: nowrap;
 }
 
+/* Yesterday's Best Pitches: the score is a real button (click to expand
+   "why is this rated X" -- see .daily-detail below), styled to match the
+   plain .watch-pitch text above it so it doesn't look like a different
+   kind of UI until you hover/focus it. */
+.watch-pitch-btn {
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  color: var(--accent-strong);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  flex: 0 0 auto;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.watch-pitch-btn:hover,
+.watch-pitch-btn:focus-visible {
+  text-decoration: underline;
+}
+
 .watch-meta {
   margin-top: 0.1rem;
   color: var(--muted);
   font-size: 0.74rem;
+}
+
+.daily-detail[hidden] {
+  display: none;
+}
+
+.daily-detail {
+  margin-top: 0.6rem;
+  padding-top: 0.6rem;
+  border-top: 1px dashed var(--line);
+}
+
+/* Same .detail-panel/.detail-stats/.detail-chart rules the full leaderboard
+   page's click-to-expand row uses (see further down this file), just forced
+   into a single narrow column instead of a side-by-side layout -- the
+   mover-box here (230-340px) is nowhere near as wide as a table row. */
+.daily-detail .detail-panel {
+  flex-direction: column;
+  flex-wrap: nowrap;
+  gap: 0.75rem;
+  padding: 0;
+}
+
+.daily-detail .detail-stats dl {
+  font-size: 0.82rem;
+}
+
+.daily-detail .detail-loading {
+  padding: 0;
 }
 
 main {
