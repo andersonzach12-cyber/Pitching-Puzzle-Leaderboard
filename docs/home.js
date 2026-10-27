@@ -32,6 +32,11 @@ function escapeHtml(s) {
   return div.innerHTML;
 }
 
+function formatStat(v, decimals, suffix) {
+  if (v === null || v === undefined || Number.isNaN(v)) return "-";
+  return Number(v).toFixed(decimals) + (suffix || "");
+}
+
 // The DB stores names straight from Baseball Savant as "Last, First" (and
 // "Last Jr., First" etc.) -- this flips that to the "First Last" form
 // people actually expect to read. Names with no comma (or a malformed one)
@@ -105,7 +110,11 @@ const YESTERDAY_TOP_N = 5;
 async function fetchYesterdaysBest() {
   const { data, error } = await client
     .from("daily_pitch_scores")
-    .select("player_id, pitch_type, daily_display_score, n_pitches, pitchers(pitcher_name)")
+    // velo/ivb_in/horizontal_in/spin_rpm weren't previously selected here --
+    // added so a clicked pitch can show its actual readings and plot them
+    // against the season's movement chart (2026-10 "why is this rated X"
+    // feature).
+    .select("player_id, pitch_type, daily_display_score, n_pitches, velo, ivb_in, horizontal_in, spin_rpm, pitchers(pitcher_name)")
     .eq("game_date", daysAgoDateString(1))
     .not("daily_display_score", "is", null)
     .order("daily_display_score", { ascending: false, nullsFirst: false })
@@ -117,17 +126,160 @@ async function fetchYesterdaysBest() {
     pitch_type: r.pitch_type,
     score: r.daily_display_score,
     n_pitches: r.n_pitches,
+    velo: r.velo,
+    ivb_in: r.ivb_in,
+    horizontal_in: r.horizontal_in,
+    spin_rpm: r.spin_rpm,
   }));
 }
 
+// --------------------------------------------------------------------------
+// "Why is this rated X?" -- click a pitch in the Yesterday's Best Pitches box
+// to expand an inline panel with that start's raw characteristics and a
+// movement-profile chart, same inline-SVG approach as the full leaderboard's
+// detail panel (docs/app.js). The one difference: the highlighted dot here
+// is that SPECIFIC START's actual velo/movement (from daily_pitch_scores),
+// not a season average -- because that's what the daily score is actually
+// z-scored against (see compute_daily_display_scores in pipeline/refresh.py:
+// every day's reading is measured against the season population, not the
+// day's own tiny cross-section). The season cloud it's plotted on is the
+// same per-pitch-type leaderboard data the full leaderboard page charts.
+// --------------------------------------------------------------------------
+
+let yesterdayRows = [];
+const seasonCloudCache = {};
+
+async function fetchSeasonCloud(pitchType) {
+  if (seasonCloudCache[pitchType]) return seasonCloudCache[pitchType];
+  const { data, error } = await client
+    .from("pitch_metrics")
+    .select("player_id, display_score, horizontal_in, ivb_in, pitchers(pitcher_name)")
+    .eq("pitch_type", pitchType)
+    .not("horizontal_in", "is", null)
+    .not("ivb_in", "is", null);
+  if (error) throw error;
+  const cloud = data.map((r) => ({
+    player_id: r.player_id,
+    pitcher_name: formatPitcherName(r.pitchers ? r.pitchers.pitcher_name : "(unknown)"),
+    display_score: r.display_score,
+    horizontal_in: r.horizontal_in,
+    ivb_in: r.ivb_in,
+  }));
+  seasonCloudCache[pitchType] = cloud;
+  return cloud;
+}
+
+function buildDailyMovementChartSvg(cloud, dayPoint, pitchType) {
+  const points = cloud.filter((r) => r.horizontal_in != null && r.ivb_in != null);
+  if (!points.length || dayPoint.horizontal_in == null || dayPoint.ivb_in == null) {
+    return "<p class=\"chart-caption\">No movement data available for this pitch type yet.</p>";
+  }
+
+  const width = 320, height = 220, pad = 30;
+  // Axis range includes the day's own point -- an exceptional start can sit
+  // outside the season cloud's normal range entirely, and that's worth
+  // showing rather than clipping.
+  const xs = points.map((p) => p.horizontal_in).concat([dayPoint.horizontal_in]);
+  const ys = points.map((p) => p.ivb_in).concat([dayPoint.ivb_in]);
+  const xMin = Math.min(...xs), xMax = Math.max(...xs);
+  const yMin = Math.min(...ys), yMax = Math.max(...ys);
+  const xSpan = xMax - xMin || 1;
+  const ySpan = yMax - yMin || 1;
+
+  const sx = (x) => pad + ((x - xMin) / xSpan) * (width - 2 * pad);
+  // SVG y grows downward, so flip: higher break drawn higher on screen.
+  const sy = (y) => height - pad - ((y - yMin) / ySpan) * (height - 2 * pad);
+
+  const dots = points.map((p) => {
+    const title = escapeHtml(`${p.pitcher_name || ""} (season avg): ${formatStat(p.horizontal_in, 1, "\" horiz")}, ${formatStat(p.ivb_in, 1, "\" IVB")}`);
+    return `<circle cx="${sx(p.horizontal_in).toFixed(1)}" cy="${sy(p.ivb_in).toFixed(1)}" r="2.6" fill="#b7c9bb" fill-opacity="0.55"><title>${title}</title></circle>`;
+  }).join("");
+
+  const dayTitle = escapeHtml(`This start: ${formatStat(dayPoint.horizontal_in, 1, "\" horiz")}, ${formatStat(dayPoint.ivb_in, 1, "\" IVB")}`);
+  const dayDot = `<circle cx="${sx(dayPoint.horizontal_in).toFixed(1)}" cy="${sy(dayPoint.ivb_in).toFixed(1)}" r="6" fill="#14532d" stroke="#fcfcfb" stroke-width="1.5"><title>${dayTitle}</title></circle>`;
+
+  return `
+    <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Movement profile scatter plot">
+      <line x1="${pad}" y1="${height - pad}" x2="${width - pad}" y2="${height - pad}" stroke="#e3e3e3" />
+      <line x1="${pad}" y1="${pad}" x2="${pad}" y2="${height - pad}" stroke="#e3e3e3" />
+      <text x="${width / 2}" y="${height - 6}" text-anchor="middle" font-size="9" fill="#6b6b6b">Horizontal break (in, arm-side +)</text>
+      <text x="10" y="${height / 2}" text-anchor="middle" font-size="9" fill="#6b6b6b" transform="rotate(-90 10 ${height / 2})">Induced vertical break (in)</text>
+      ${dots}
+      ${dayDot}
+    </svg>
+    <p class="chart-caption">Every qualifying ${escapeHtml(PITCH_LABELS[pitchType] || pitchType)} this season (${points.length} pitchers, season averages, light dots); the large dot is this pitcher's actual readings from this one start.</p>
+  `;
+}
+
+function buildDailyDetailPanel(row, cloud) {
+  const chart = buildDailyMovementChartSvg(cloud, row, row.pitch_type);
+  const seasonEntry = cloud.find((c) => c.player_id === row.player_id);
+  const seasonComparison = seasonEntry && seasonEntry.display_score != null
+    ? `<dt title="This pitcher's full-season uScore+ for this pitch type, for comparison">Season uScore+</dt><dd>${formatScore(seasonEntry.display_score)}</dd>`
+    : "";
+  return `
+    <div class="detail-panel">
+      <div class="detail-stats">
+        <dl>
+          <dt>Velocity</dt><dd>${formatStat(row.velo, 1, " mph")}</dd>
+          <dt>Induced vertical break</dt><dd>${formatStat(row.ivb_in, 1, " in")}</dd>
+          <dt>Horizontal break</dt><dd title="Positive = breaks toward the pitcher's arm side; negative = glove side.">${formatStat(row.horizontal_in, 1, " in")}</dd>
+          <dt>Spin rate</dt><dd>${formatStat(row.spin_rpm, 0, " rpm")}</dd>
+          <dt>Pitches thrown</dt><dd>${row.n_pitches}</dd>
+          <dt title="This start's uScore+, z-scored against the full-season league distribution for this pitch type">uScore+ (this start)</dt><dd>${formatScore(row.score)}</dd>
+          ${seasonComparison}
+        </dl>
+      </div>
+      <div class="detail-chart">${chart}</div>
+    </div>
+  `;
+}
+
+async function toggleDailyDetail(idx, btn, container) {
+  const isOpen = !container.hidden;
+  if (isOpen) {
+    container.hidden = true;
+    container.innerHTML = "";
+    btn.setAttribute("aria-expanded", "false");
+    return;
+  }
+  btn.setAttribute("aria-expanded", "true");
+  container.hidden = false;
+  container.innerHTML = "<div class=\"detail-loading\">Loading chart...</div>";
+  const row = yesterdayRows[idx];
+  try {
+    const cloud = await fetchSeasonCloud(row.pitch_type);
+    // The toggle could have been collapsed again while the fetch was in
+    // flight -- don't reopen it out from under someone who already closed it.
+    if (container.hidden) return;
+    container.innerHTML = buildDailyDetailPanel(row, cloud);
+  } catch (err) {
+    console.error(err);
+    container.innerHTML = "<p class=\"chart-caption\">Couldn't load the chart for this pitch.</p>";
+  }
+}
+
+function wireYesterdayDetailToggles() {
+  document.querySelectorAll(".watch-pitch-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const idx = Number(btn.dataset.idx);
+      const container = document.querySelector(`.daily-detail[data-idx="${idx}"]`);
+      if (!container) return;
+      toggleDailyDetail(idx, btn, container);
+    });
+  });
+}
+
 function renderYesterdayBox(rows) {
-  const items = rows.map((r) => `
+  yesterdayRows = rows;
+  const items = rows.map((r, i) => `
     <li>
       <div class="watch-main">
         <a class="watch-name" href="${playerProfileUrl(r.player_id, r.pitcher_name)}">${escapeHtml(r.pitcher_name || "")}</a>
-        <span class="watch-pitch">${escapeHtml(PITCH_LABELS[r.pitch_type] || r.pitch_type)} (${formatScore(r.score)})</span>
+        <button type="button" class="watch-pitch-btn" data-idx="${i}" aria-expanded="false" title="Click to see why this pitch was rated ${formatScore(r.score)}">${escapeHtml(PITCH_LABELS[r.pitch_type] || r.pitch_type)} (${formatScore(r.score)})</button>
       </div>
       <div class="watch-meta">${r.n_pitches} thrown yesterday</div>
+      <div class="daily-detail" data-idx="${i}" hidden></div>
     </li>
   `).join("");
 
@@ -356,6 +508,7 @@ async function loadHome() {
     // Two centered boxes, watch-list first -- the biggest-movers box has
     // been removed for now (see git history to restore it).
     moversRow.innerHTML = renderWatchBox(watchList) + renderYesterdayBox(yesterdaysBest);
+    wireYesterdayDetailToggles();
     status.textContent = "";
   } catch (err) {
     console.error(err);
